@@ -1,0 +1,29 @@
+# ==========================
+#  ENVIRONNEMENTS PYTHON
+# ==========================
+.venv/
+venv/
+.env/
+*.env
+__pycache__/
+*.pyc
+.build/
+build/
+
+# ==========================
+#  LOGS ET SORTIES TEMPORAIRES
+# ==========================
+*.log
+logs/
+
+# ==========================
+#  TESTS / COVERAGE
+# ==========================
+.pytest_cache/
+
+# ==========================
+#  DOCUMENTATION
+# ==========================
+docs/*
+
+.vscode/
