@@ -295,9 +295,6 @@ class WebFuzzer:
         reasons = []
         marker = "xss"
 
-        if marker in text:
-            reasons.append("XSS_REFLECTED")
-
         # contexte HTML non échappé
         if '<' in payload and '<img' in text:
             reasons.append("XSS_HTML")
@@ -309,7 +306,7 @@ class WebFuzzer:
         # Erreurs SQL
         sql_errors = [
             ('sql syntax', 'SQL_SYNTAX'),
-            # ('mysql', 'MYSQL_ERROR'),
+            ('SQLSTATE', 'MYSQL_ERROR'),
             ('sqlite', 'SQLITE_ERROR'),
             ('postgresql', 'POSTGRES_ERROR'),
             ('ora-', 'ORACLE_ERROR'),
