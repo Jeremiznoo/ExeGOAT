@@ -1,2 +1,5 @@
 argparse
 colorama
+httpx
+asyncio
+bs4
