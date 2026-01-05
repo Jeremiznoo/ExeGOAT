@@ -16,8 +16,11 @@ class WebFuzzer:
     Web Fuzzer tools for ExeGOAT
         Attributes:
             base_url : url à fuzz
+            baseline_length : taille de la page
+            baseline_tags : Nombre de balise sur la page
             timeout : temps avant un timeout par defaut 5 secondes
             results : les resultats par defaut a []
+            cookies : cookies fournies par le user
     """
     def __init__(self, base_url: str, timeout: float = 5.0, cookies: dict = None):
         """
