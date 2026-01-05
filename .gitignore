@@ -22,8 +22,12 @@ logs/
 .pytest_cache/
 
 # ==========================
-#  DOCUMENTATION
+# DOCUMENTATION (Sphinx)
 # ==========================
-docs/*
+
+docs/_build/
+docs/build/
+docs/.doctrees/
 
 .vscode/
+
