@@ -3,3 +3,5 @@ colorama
 httpx
 asyncio
 bs4
+sphinx
+sphinx-rtd-theme
