@@ -180,20 +180,6 @@ def main():
         help='Afficher uniquement ces codes de statut Ex: --show-codes 200,301'
     )
 
-    fuzzer_filter.add_argument(
-        '--min-length',
-        type=int,
-        metavar='BYTES',
-        help='Taille minimale de réponse en bytes Ex: --min-length 100'
-    )
-
-    fuzzer_filter.add_argument(
-        '--max-length',
-        type=int,
-        metavar='BYTES',
-        help='Taille maximale de réponse en bytes Ex: --max-length 5000'
-    )
-
     # ═══════════════════════════════════════════════════════
     # FUZZER - PAYLOADS
     # ═══════════════════════════════════════════════════════
@@ -238,18 +224,6 @@ def main():
         '--auto-export',
         action='store_true',
         help='Exporter automatiquement dans results_YYYYMMDD_HHMMSS.txt'
-    )
-
-    # ═══════════════════════════════════════════════════════
-    # FUZZER - ANOMALIES
-    # ═══════════════════════════════════════════════════════
-
-    fuzzer_detection = parser.add_argument_group('fuzzer - détection d\'anomalies')
-
-    fuzzer_detection.add_argument(
-        '--detect-errors',
-        action='store_true',
-        help='Activer toutes les détections d\'anomalies'
     )
 
     # ═══════════════════════════════════════════════════════
@@ -356,21 +330,19 @@ def run_fuzzer(args):
         print(f"{BLUE}Réseau:{RESET}")
         print(f"  Concurrence    : {args.threads}")
         print(f"  Timeout        : {args.timeout}s")
+        print(f"  Suivre redirects : {args.follow_redirects}")
+
 
         if args.cookie:
             cookie_preview = args.cookie[:50] + "..." if len(args.cookie) > 50 else args.cookie
             print(f"  Cookie         : {cookie_preview}")
 
-        if args.hide_codes or args.show_codes or args.min_length or args.max_length:
+        if args.hide_codes or args.show_codes:
             print(f"{BLUE}Filtres:{RESET}")
             if args.hide_codes:
                 print(f"  Cacher codes   : {args.hide_codes}")
             if args.show_codes:
                 print(f"  Montrer codes  : {args.show_codes}")
-            if args.min_length:
-                print(f"  Taille min     : {args.min_length} bytes")
-            if args.max_length:
-                print(f"  Taille max     : {args.max_length} bytes \n")
 
         if args.extensions or args.prefix or args.suffix:
             print(f"{BLUE}Payloads:{RESET}")
@@ -381,9 +353,7 @@ def run_fuzzer(args):
             if args.suffix:
                 print(f"  Suffixe        : {args.suffix}\n")
 
-        if args.detect_errors:
-            print(f"{BLUE}Détections:{RESET}")
-
+        print(f"{BLUE}Détections:{RESET}")
 
         if args.output:
             print(f"  Fichier        : {args.output}")
@@ -396,7 +366,6 @@ def run_fuzzer(args):
             print(f"{BLUE}Autres:{RESET}")
             print(f"  Délai          : {args.delay}s entre requêtes\n")
 
-        print(f"{GREEN}{'='*60}{RESET}\n")
 
     # ═══════════════════════════════════════════════════════
     # LANCER LE FUZZER
@@ -418,7 +387,8 @@ def run_fuzzer(args):
         fuzzer = WebFuzzer(
             base_url=args.url,
             timeout=args.timeout,
-            cookies=cookies
+            cookies=cookies,
+            follow_redirect=args.follow_redirects
         )
 
         # Lancer selon le mode
@@ -426,7 +396,7 @@ def run_fuzzer(args):
             asyncio.run(
                 fuzzer.fuzz_directories(
                     wordlist_path=args.wordlist,
-                    max_concurrent=args.threads
+                    max_concurrent=args.threads,
                 )
             )
 
@@ -444,7 +414,8 @@ def run_fuzzer(args):
                     endpoint="",
                     param_name=args.param,
                     payloads=payloads,
-                    max_concurrent=args.threads
+                    max_concurrent=args.threads,
+                    follow_redirect=args.follow_redirects
                 )
             )
 
@@ -471,7 +442,8 @@ def run_fuzzer(args):
                     param_name=args.param,
                     payloads=payloads,
                     additional_data=post_data,
-                    max_concurrent=args.threads
+                    max_concurrent=args.threads,
+                    follow_redirect=args.follow_redirects
                 )
             )
 

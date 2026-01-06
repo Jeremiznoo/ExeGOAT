@@ -22,7 +22,7 @@ class WebFuzzer:
             results : les resultats par defaut a []
             cookies : cookies fournies par le user
     """
-    def __init__(self, base_url: str, timeout: float = 5.0, cookies: dict = None):
+    def __init__(self, base_url: str, timeout: float = 5.0, cookies: dict = None, follow_redirect = False):
         """
         Initialise le fuzzer web
         
@@ -37,6 +37,7 @@ class WebFuzzer:
         self.results = []
         self.baseline_length = None
         self.baseline_tags = None
+        self.follow_redirect = follow_redirect
 
     async def test_url(self, client: httpx.AsyncClient, path: str) -> dict:
         """
@@ -154,7 +155,7 @@ class WebFuzzer:
                 return await self.test_url(client, path)
 
         # Lancer toutes les requêtes
-        async with httpx.AsyncClient(follow_redirects=False, cookies=self.cookies) as client:
+        async with httpx.AsyncClient(follow_redirects=self.follow_redirect, cookies=self.cookies) as client:
             tasks = []
             for path in paths:
                 task = test_url_paralalize(client, path)
@@ -268,7 +269,7 @@ class WebFuzzer:
                     }
 
         # Exécution des tests en parallèle
-        async with httpx.AsyncClient(follow_redirects=True, cookies=self.cookies) as client:
+        async with httpx.AsyncClient(follow_redirects=self.follow_redirect, cookies=self.cookies) as client:
             tasks = [test_payload(client, payload) for payload in payloads]
             results = await asyncio.gather(*tasks)
 
@@ -469,7 +470,7 @@ class WebFuzzer:
                     }
 
         # Exécution des tests en parallèle
-        async with httpx.AsyncClient(follow_redirects=True, cookies=self.cookies) as client:
+        async with httpx.AsyncClient(follow_redirects=self.follow_redirect, cookies=self.cookies) as client:
             tasks = [test_payload(client, payload) for payload in payloads]
             results = await asyncio.gather(*tasks)
 
