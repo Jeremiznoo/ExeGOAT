@@ -21,7 +21,9 @@ class WebFuzzer:
             follow_redirect (bool): Permet de suivre ou non les redirections
             xss_marker (str): Marqueur qui permet de detecter les xss 
     """
-    def __init__(self, base_url: str, timeout: float = 5.0, cookies: dict = None, follow_redirect = False, show_codes: list = [], hide_codes: list = [], xss_marker: str ="xss"):
+    def __init__(self, base_url: str, timeout: float = 5.0, cookies: dict = None,
+                 follow_redirect = False, show_codes: list = None, hide_codes: list = None,
+                 xss_marker: str ="xss"):
         """
         Initialise le fuzzer web
         
@@ -45,7 +47,13 @@ class WebFuzzer:
         self.results = []
         self.baseline_length = None
         self.baseline_tags = None
-    
+
+        if self.show_codes is None:
+            self.show_codes = []
+
+        if self.hide_codes is None:
+            self.hide_codes = []
+
     def _include_result(self, result: dict) -> bool:
         """
         Détermine si un résultat doit être inclus selon les filtres
@@ -57,17 +65,17 @@ class WebFuzzer:
             bool: True si le résultat doit être inclus
         """
         status = result.get('status')
-        
+
         # Filtrer par codes à masquer
         if self.hide_codes and status in self.hide_codes:
             return False
-        
+
         # Filtrer par codes à afficher uniquement
         if self.show_codes and status not in self.show_codes:
             return False
 
         return True
-    
+
 
     def export_results_txt(self, output_file: str = None) -> None:
         """
@@ -121,7 +129,7 @@ class WebFuzzer:
         Returns:
             list: Résultats filtrés et conservés
         """
-            
+
         print(f"[*] Chargé {len(payloads)} payloads")
         print(f"[*] Cible: {self.base_url}")
         print(f"[*] Concurrence: {max_concurrent}\n")
@@ -151,7 +159,8 @@ class WebFuzzer:
                     }
 
         # Lancer toutes les requêtes
-        async with httpx.AsyncClient(follow_redirects=self.follow_redirect, cookies=self.cookies) as client:
+        async with httpx.AsyncClient(follow_redirects=self.follow_redirect,
+                                     cookies=self.cookies) as client:
             tasks = []
             for payload in payloads:
                 task = test_url_paralalize(client, payload)
@@ -169,7 +178,7 @@ class WebFuzzer:
 
         print(f"\n[✓] Terminé ! {len(self.results)} URLs trouvées")
         return self.results
-    
+
 
     def _print_result(self, result: dict) -> None:
         """
@@ -267,7 +276,8 @@ class WebFuzzer:
                     }
 
         # Exécution des tests en parallèle
-        async with httpx.AsyncClient(follow_redirects=self.follow_redirect, cookies=self.cookies) as client:
+        async with httpx.AsyncClient(follow_redirects=self.follow_redirect,
+                                     cookies=self.cookies) as client:
             tasks = [test_payload(client, payload) for payload in payloads]
             results = await asyncio.gather(*tasks)
 
@@ -467,7 +477,8 @@ class WebFuzzer:
                     }
 
         # Exécution des tests en parallèle
-        async with httpx.AsyncClient(follow_redirects=self.follow_redirect, cookies=self.cookies) as client:
+        async with httpx.AsyncClient(follow_redirects=self.follow_redirect,
+                                     cookies=self.cookies) as client:
             tasks = [test_payload(client, payload) for payload in payloads]
             results = await asyncio.gather(*tasks)
 
@@ -598,7 +609,7 @@ class WebFuzzer:
             value_preview = str(value)[:50]
             print(f"    {key} = {value_preview}")
         print()
-        
+
         # URL d'action du formulaire
         action = form_info['action']
 
@@ -648,26 +659,42 @@ class WebFuzzer:
         self.base_url = original_base_url
 
         return results
-    
+
 def parse_status_codes(value: str, option_name: str) -> list[int]:
+    """
+        Permet de parser les codes https dans la commandes fourni par le user
+        Args :
+            value (str) : 
+            option_name (str) : le nom de l'option (hide codes, show codes)
+        
+        Returns :
+            list(set(int)) :  Les codes http
+    """
     codes = []
     for code in value.split(','):
         code = code.strip()
+        
         if not code:
             continue
+
         if not code.isdigit():
             raise ValueError(f"{option_name}: code invalide '{code}'")
         codes.append(int(code))
-    return list(set(codes))
 
-def transform_payloads(
-    payloads,
-    prefix=None,
-    suffix=None,
-    extensions=None
-):
+    return list(set(codes)) # Permet de ne pas avoir de doublons
+
+def transform_payloads(payloads, prefix=None, suffix=None, extensions=None) -> str:
     """
-    Applique préfixe, suffixe et extensions aux payloads
+    Permet de transformet les payloads ajouter un suffix, prefix ou une extenstion 
+    
+    Args:
+        payloads (str): le payloads que l'on shouaite modifié
+        prefix (str): la valeur à ajouter avant le au payload (Ex : test_PAYLOAD)
+        suffix (str): la valeur à ajouter après le au payload ( Ex : PAYLOAD_backup)
+        extensions (str): la valeur à ajouter après le au payload ( Ex: PAYLOAD.ext, PAYLOAD.html )
+
+    Returns : 
+        str : le payload modifié
     """
     results = set()
 

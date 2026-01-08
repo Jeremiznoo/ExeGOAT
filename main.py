@@ -419,9 +419,10 @@ def run_fuzzer(args):
                     stripped = line.strip()
                     if stripped:
                         payloads.append(stripped)
-            
-            payloads = transform_payloads(payloads, prefix=args.prefix, suffix=args.suffix, extensions=args.extensions)
-            
+
+            payloads = transform_payloads(payloads, prefix=args.prefix,
+                                          suffix=args.suffix, extensions=args.extensions)
+
             if args.mode == 'dir':
                 asyncio.run(
                     fuzzer.fuzz_directories(
@@ -438,7 +439,7 @@ def run_fuzzer(args):
                     stripped = line.strip()
                     if stripped:
                         payloads.append(stripped)
-            
+
             payloads = transform_payloads(payloads, prefix=args.prefix, suffix=args.suffix, extensions=args.extensions)
 
             asyncio.run(
@@ -494,7 +495,7 @@ def run_fuzzer(args):
                         key, value = pair.split('=', 1)
                         field_values[key] = value
 
-            results = asyncio.run(
+            asyncio.run(
                 fuzzer.fuzz_form(
                     form_url=args.form_url,
                     param_to_fuzz=args.param,
@@ -516,10 +517,10 @@ def run_fuzzer(args):
 
     except FileNotFoundError:
         print(f"{RED}[!] Erreur: Wordlist non trouvée: {args.wordlist}{RESET}")
-    
+
     except KeyboardInterrupt:
         print(f"\n{YELLOW}[!] Interruption par l'utilisateur{RESET}")
-    
+
     except Exception as e:
         print(f"{RED}[!] Erreur: {e}{RESET}")
 
