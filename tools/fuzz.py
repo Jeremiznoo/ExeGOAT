@@ -673,7 +673,7 @@ def parse_status_codes(value: str, option_name: str) -> list[int]:
     codes = []
     for code in value.split(','):
         code = code.strip()
-        
+
         if not code:
             continue
 
