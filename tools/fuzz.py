@@ -9,17 +9,21 @@ import os
 import asyncio
 from bs4 import BeautifulSoup
 import httpx
-
-
 class WebFuzzer:
     """
     Web Fuzzer tools for ExeGOAT
         Attributes:
-            base_url : url à fuzz
-            timeout : temps avant un timeout par defaut 5 secondes
-            results : les resultats par defaut a []
+            base_url (str): URL de base de la cible (ex: "https://example.com")
+            timeout (float): Timeout en secondes pour les requêtes
+            cookies (dict): Cookies de session (ex: {"PHPSESSID": "abc123"})
+            show_codes (list): Code http que l'utilisateur souhaite voir
+            hide_codes (list): Code http que l'utilisateur ne souhaite pas voir
+            follow_redirect (bool): Permet de suivre ou non les redirections
+            xss_marker (str): Marqueur qui permet de detecter les xss 
     """
-    def __init__(self, base_url: str, timeout: float = 5.0, cookies: dict = None):
+    def __init__(self, base_url: str, timeout: float = 5.0, cookies: dict = None,
+                 follow_redirect = False, show_codes: list = None, hide_codes: list = None,
+                 xss_marker: str ="xss"):
         """
         Initialise le fuzzer web
         
@@ -27,45 +31,51 @@ class WebFuzzer:
             base_url (str): URL de base de la cible (ex: "https://example.com")
             timeout (float): Timeout en secondes pour les requêtes
             cookies (dict): Cookies de session (ex: {"PHPSESSID": "abc123"})
+            show_codes (list): Code http que l'utilisateur souhaite voir
+            hide_codes (list): Code http que l'utilisateur ne souhaite pas voir
+            follow_redirect (bool): Permet de suivre ou non les redirections
+            xss_marker (str): Marqueur qui permet de detecter les xss 
+
         """
         self.base_url = base_url
         self.timeout = timeout
         self.cookies = cookies
+        self.hide_codes = hide_codes
+        self.show_codes = show_codes
+        self.follow_redirect = follow_redirect
+        self.xss_marker = xss_marker
         self.results = []
         self.baseline_length = None
         self.baseline_tags = None
 
-    async def test_url(self, client: httpx.AsyncClient, path: str) -> dict:
+        if self.show_codes is None:
+            self.show_codes = []
+
+        if self.hide_codes is None:
+            self.hide_codes = []
+
+    def _include_result(self, result: dict) -> bool:
         """
-        Teste une URL et retourne les informations
+        Détermine si un résultat doit être inclus selon les filtres
         
         Args:
-            client (httpx.AsyncClient): Client HTTP asynchrone
-            path (str): Chemin à tester (ex: "admin", "backup")
+            result (dict): Résultat à vérifier
         
         Returns:
-            dict: Dictionnaire contenant url, status, length, redirect
+            bool: True si le résultat doit être inclus
         """
-        url = f"{self.base_url}/{path}"
+        status = result.get('status')
 
-        try:
-            response = await client.get(url, timeout=self.timeout)
+        # Filtrer par codes à masquer
+        if self.hide_codes and status in self.hide_codes:
+            return False
 
-            result = {
-                'path': path,
-                'url': url,
-                'status': response.status_code,
-                'length': len(response.content),
-                'redirect': str(response.url) if response.url != url else None
-            }
+        # Filtrer par codes à afficher uniquement
+        if self.show_codes and status not in self.show_codes:
+            return False
 
-            return result
+        return True
 
-        except httpx.TimeoutException:
-            return {'path': path, 'url': url, 'status': 'TIMEOUT'}
-
-        except Exception as e:
-            return {'path': path, 'url': url, 'status': 'ERROR', 'error': str(e)}
 
     def export_results_txt(self, output_file: str = None) -> None:
         """
@@ -108,66 +118,67 @@ class WebFuzzer:
 
 
 
-    async def fuzz_directories(self, wordlist_path: str, max_concurrent: int = 50) -> list:
+    async def fuzz_directories(self,  payloads: list[str], max_concurrent: int = 50) -> list:
         """
-        Fuzze des répertoires avec une wordlist
-        
+        Fuzz des répertoires / fichiers à partir de payloads préparés
+
         Args:
-            wordlist_path (str): Chemin vers le fichier wordlist
-            max_concurrent (int): Nombre de requêtes simultanées maximum
-        
+            payloads (list[str]): Liste des chemins à tester
+            max_concurrent (int): Nombre maximum de requêtes simultanées
+
         Returns:
-            list: Liste des résultats intéressants (status != 404)
+            list: Résultats filtrés et conservés
         """
-        # Lire la wordlist
-        with open(wordlist_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
 
-        paths = []
-        for line in lines:
-            stripped = line.strip()
-            if stripped:
-                paths.append(stripped)
-
-        print(f"[*] Chargé {len(paths)} chemins")
+        print(f"[*] Chargé {len(payloads)} payloads")
         print(f"[*] Cible: {self.base_url}")
         print(f"[*] Concurrence: {max_concurrent}\n")
 
         # Permet de limiter le nombre de requêtes simultanées
         req_paralalize_max = asyncio.Semaphore(max_concurrent)
 
-        async def test_url_paralalize(client, path):
-            """
-            Teste une URL avec limitation de concurrence
-            
-            Args:
-                client (httpx.AsyncClient): Client HTTP
-                path (str): Chemin à tester
-            
-            Returns:
-                dict: Résultat du test
-            """
+        async def test_url_paralalize(client: httpx.AsyncClient, payload: str) -> dict:
             async with req_paralalize_max:
-                return await self.test_url(client, path)
+                url = f"{self.base_url.rstrip('/')}/{payload.lstrip('/')}"
+
+                try:
+                    response = await client.get(url)
+                    return {
+                        "url": url,
+                        "path": payload,
+                        "status": response.status_code,
+                        "length": len(response.content),
+                    }
+
+                except Exception:
+                    return {
+                        "url": url,
+                        "path": payload,
+                        "status": "ERROR",
+                        "length": 0,
+                    }
 
         # Lancer toutes les requêtes
-        async with httpx.AsyncClient(follow_redirects=False, cookies=self.cookies) as client:
+        async with httpx.AsyncClient(follow_redirects=self.follow_redirect,
+                                     cookies=self.cookies) as client:
             tasks = []
-            for path in paths:
-                task = test_url_paralalize(client, path)
+            for payload in payloads:
+                task = test_url_paralalize(client, payload)
                 tasks.append(task)
 
             results = await asyncio.gather(*tasks)
 
         # Filtrer et afficher les résultats
         for result in results:
-            status = result.get('status')
-            if status not in [404, 'ERROR']:
+
+            if self._include_result(result):
                 self._print_result(result)
-                self.results.append(result)
+
+            self.results.append(result)
 
         print(f"\n[✓] Terminé ! {len(self.results)} URLs trouvées")
         return self.results
+
 
     def _print_result(self, result: dict) -> None:
         """
@@ -249,11 +260,11 @@ class WebFuzzer:
                     if is_valid:
                         payload_preview = payload[:50]
                         size_diff = len(response.content) - self.baseline_length if self.baseline_length else 0
-
-                        print(f"[✓] Payload valide: {payload_preview}")
-                        print(f"    └─ Status: {response.status_code}, Length: {len(response.content)} (Δ{size_diff:+d})")
-                        if reasons:
-                            print(f"    └─ Raisons: {', '.join(reasons)}")
+                        if self._include_result(result):
+                            print(f"[✓] Payload valide: {payload_preview}")
+                            print(f"    └─ Status: {response.status_code}, Length: {len(response.content)} (Δ{size_diff:+d})")
+                            if reasons:
+                                print(f"    └─ Raisons: {', '.join(reasons)}")
 
                     return result
 
@@ -265,7 +276,8 @@ class WebFuzzer:
                     }
 
         # Exécution des tests en parallèle
-        async with httpx.AsyncClient(follow_redirects=True, cookies=self.cookies) as client:
+        async with httpx.AsyncClient(follow_redirects=self.follow_redirect,
+                                     cookies=self.cookies) as client:
             tasks = [test_payload(client, payload) for payload in payloads]
             results = await asyncio.gather(*tasks)
 
@@ -293,7 +305,7 @@ class WebFuzzer:
         text = response.text.lower()
         content_length = len(response.content)
         reasons = []
-        marker = "xss"
+        marker = self.xss_marker
 
         # contexte HTML non échappé
         if '<' in payload and '<img' in text:
@@ -445,12 +457,11 @@ class WebFuzzer:
                         'reasons': reasons,
                         'post_data': post_data
                     }
-
+                    print(is_valid)
                     # Affichage si payload valide
-                    if is_valid:
+                    if is_valid :
                         payload_preview = payload[:50]
                         size_diff = len(response.content) - self.baseline_length if self.baseline_length else 0
-
                         print(f"[✓] Payload valide: {payload_preview}")
                         print(f"    └─ Status: {response.status_code}, Length: {len(response.content)} (Δ{size_diff:+d})")
                         if reasons:
@@ -466,7 +477,8 @@ class WebFuzzer:
                     }
 
         # Exécution des tests en parallèle
-        async with httpx.AsyncClient(follow_redirects=True, cookies=self.cookies) as client:
+        async with httpx.AsyncClient(follow_redirects=self.follow_redirect,
+                                     cookies=self.cookies) as client:
             tasks = [test_payload(client, payload) for payload in payloads]
             results = await asyncio.gather(*tasks)
 
@@ -474,6 +486,7 @@ class WebFuzzer:
         interesting = []
         for result in results:
             if result.get('valid'):
+                print(result)
                 self.results.append(result)
                 interesting.append(result)
 
@@ -596,7 +609,7 @@ class WebFuzzer:
             value_preview = str(value)[:50]
             print(f"    {key} = {value_preview}")
         print()
-        
+
         # URL d'action du formulaire
         action = form_info['action']
 
@@ -646,3 +659,70 @@ class WebFuzzer:
         self.base_url = original_base_url
 
         return results
+
+def parse_status_codes(value: str, option_name: str) -> list[int]:
+    """
+        Permet de parser les codes https dans la commandes fourni par le user
+        Args :
+            value (str) : 
+            option_name (str) : le nom de l'option (hide codes, show codes)
+        
+        Returns :
+            list(set(int)) :  Les codes http
+    """
+    codes = []
+    for code in value.split(','):
+        code = code.strip()
+
+        if not code:
+            continue
+
+        if not code.isdigit():
+            raise ValueError(f"{option_name}: code invalide '{code}'")
+        codes.append(int(code))
+
+    return list(set(codes)) # Permet de ne pas avoir de doublons
+
+def transform_payloads(payloads, prefix=None, suffix=None, extensions=None) -> str:
+    """
+    Permet de transformet les payloads ajouter un suffix, prefix ou une extenstion 
+    
+    Args:
+        payloads (str): le payloads que l'on shouaite modifié
+        prefix (str): la valeur à ajouter avant le au payload (Ex : test_PAYLOAD)
+        suffix (str): la valeur à ajouter après le au payload ( Ex : PAYLOAD_backup)
+        extensions (str): la valeur à ajouter après le au payload ( Ex: PAYLOAD.ext, PAYLOAD.html )
+
+    Returns : 
+        str : le payload modifié
+    """
+    results = set()
+
+    # Parser extensions
+    ext_list = []
+    if extensions:
+        ext_list = [
+            ext.strip().lstrip('.')
+            for ext in extensions.split(',')
+            if ext.strip()
+        ]
+
+    for payload in payloads:
+        base = payload.strip()
+        if not base:
+            continue
+
+        if prefix:
+            base = f"{prefix}{base}"
+
+        if suffix:
+            base = f"{base}{suffix}"
+
+        # Payload sans extension
+        results.add(base)
+
+        # Payloads avec extensions
+        for ext in ext_list:
+            results.add(f"{base}.{ext}")
+
+    return list(results)

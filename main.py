@@ -1,7 +1,7 @@
 import argparse
 import asyncio
 from colorama import init, Fore, Style
-from tools.fuzz import WebFuzzer
+from tools.fuzz import WebFuzzer, parse_status_codes, transform_payloads
 
 BLUE = Fore.BLUE
 WHITE = Fore.WHITE
@@ -180,20 +180,6 @@ def main():
         help='Afficher uniquement ces codes de statut Ex: --show-codes 200,301'
     )
 
-    fuzzer_filter.add_argument(
-        '--min-length',
-        type=int,
-        metavar='BYTES',
-        help='Taille minimale de réponse en bytes Ex: --min-length 100'
-    )
-
-    fuzzer_filter.add_argument(
-        '--max-length',
-        type=int,
-        metavar='BYTES',
-        help='Taille maximale de réponse en bytes Ex: --max-length 5000'
-    )
-
     # ═══════════════════════════════════════════════════════
     # FUZZER - PAYLOADS
     # ═══════════════════════════════════════════════════════
@@ -221,6 +207,12 @@ def main():
         help='Suffixe à ajouter aux payloads Ex: --suffix _backup'
     )
 
+    fuzzer_payload.add_argument(
+        '--xss-marker',
+        type=str,
+        metavar='XXS MARKER',
+        help='Permet de définir le marquer xss (Par défault : xss)'
+    )
     # ═══════════════════════════════════════════════════════
     # FUZZER - EXPORT
     # ═══════════════════════════════════════════════════════
@@ -238,18 +230,6 @@ def main():
         '--auto-export',
         action='store_true',
         help='Exporter automatiquement dans results_YYYYMMDD_HHMMSS.txt'
-    )
-
-    # ═══════════════════════════════════════════════════════
-    # FUZZER - ANOMALIES
-    # ═══════════════════════════════════════════════════════
-
-    fuzzer_detection = parser.add_argument_group('fuzzer - détection d\'anomalies')
-
-    fuzzer_detection.add_argument(
-        '--detect-errors',
-        action='store_true',
-        help='Activer toutes les détections d\'anomalies'
     )
 
     # ═══════════════════════════════════════════════════════
@@ -356,23 +336,20 @@ def run_fuzzer(args):
         print(f"{BLUE}Réseau:{RESET}")
         print(f"  Concurrence    : {args.threads}")
         print(f"  Timeout        : {args.timeout}s")
+        print(f"  Suivre redirects : {args.follow_redirects}")
 
         if args.cookie:
             cookie_preview = args.cookie[:50] + "..." if len(args.cookie) > 50 else args.cookie
             print(f"  Cookie         : {cookie_preview}")
 
-        if args.hide_codes or args.show_codes or args.min_length or args.max_length:
+        if args.hide_codes or args.show_codes:
             print(f"{BLUE}Filtres:{RESET}")
             if args.hide_codes:
                 print(f"  Cacher codes   : {args.hide_codes}")
             if args.show_codes:
                 print(f"  Montrer codes  : {args.show_codes}")
-            if args.min_length:
-                print(f"  Taille min     : {args.min_length} bytes")
-            if args.max_length:
-                print(f"  Taille max     : {args.max_length} bytes \n")
 
-        if args.extensions or args.prefix or args.suffix:
+        if args.extensions or args.prefix or args.suffix or args.xss_marker:
             print(f"{BLUE}Payloads:{RESET}")
             if args.extensions:
                 print(f"  Extensions     : {args.extensions}")
@@ -380,10 +357,10 @@ def run_fuzzer(args):
                 print(f"  Préfixe        : {args.prefix}")
             if args.suffix:
                 print(f"  Suffixe        : {args.suffix}\n")
+            if args.suffix:
+                print(f"  Xss Marker        : {args.xss_marker}\n")
 
-        if args.detect_errors:
-            print(f"{BLUE}Détections:{RESET}")
-
+        print(f"{BLUE}Détections:{RESET}")
 
         if args.output:
             print(f"  Fichier        : {args.output}")
@@ -396,7 +373,6 @@ def run_fuzzer(args):
             print(f"{BLUE}Autres:{RESET}")
             print(f"  Délai          : {args.delay}s entre requêtes\n")
 
-        print(f"{GREEN}{'='*60}{RESET}\n")
 
     # ═══════════════════════════════════════════════════════
     # LANCER LE FUZZER
@@ -415,20 +391,45 @@ def run_fuzzer(args):
                     name, value = cookie_pair.split('=', 1)
                     cookies[name.strip()] = value.strip()
 
+        if args.hide_codes:
+            hide_codes = parse_status_codes(args.hide_codes, "--hide-codes")
+        else:
+            hide_codes = []
+
+        if args.show_codes:
+            show_codes = parse_status_codes(args.show_codes, "--show-codes")
+        else:
+            show_codes = []
+
         fuzzer = WebFuzzer(
             base_url=args.url,
             timeout=args.timeout,
-            cookies=cookies
+            cookies=cookies,
+            follow_redirect=args.follow_redirects,
+            show_codes=show_codes,
+            hide_codes=hide_codes,
+            xss_marker=args.xss_marker
         )
 
         # Lancer selon le mode
         if args.mode == 'dir':
-            asyncio.run(
-                fuzzer.fuzz_directories(
-                    wordlist_path=args.wordlist,
-                    max_concurrent=args.threads
+            with open(args.wordlist, 'r', encoding='utf-8') as f:
+                payloads = []
+                for line in f:
+                    stripped = line.strip()
+                    if stripped:
+                        payloads.append(stripped)
+
+            payloads = transform_payloads(payloads, prefix=args.prefix,
+                                          suffix=args.suffix, extensions=args.extensions)
+
+            if args.mode == 'dir':
+                asyncio.run(
+                    fuzzer.fuzz_directories(
+                        payloads=payloads,
+                        max_concurrent=args.threads
+                    )
                 )
-            )
 
         elif args.mode == 'param':
             # Charger les payloads
@@ -439,12 +440,14 @@ def run_fuzzer(args):
                     if stripped:
                         payloads.append(stripped)
 
-            results = asyncio.run(
+            payloads = transform_payloads(payloads, prefix=args.prefix, suffix=args.suffix, extensions=args.extensions)
+
+            asyncio.run(
                 fuzzer.fuzz_parameter(
                     endpoint="",
                     param_name=args.param,
                     payloads=payloads,
-                    max_concurrent=args.threads
+                    max_concurrent=args.threads,
                 )
             )
 
@@ -465,13 +468,13 @@ def run_fuzzer(args):
                         key, value = pair.split('=', 1)
                         post_data[key] = value
 
-            results = asyncio.run(
+            asyncio.run(
                 fuzzer.fuzz_post_parameter(
                     endpoint="",
                     param_name=args.param,
                     payloads=payloads,
                     additional_data=post_data,
-                    max_concurrent=args.threads
+                    max_concurrent=args.threads,
                 )
             )
 
@@ -492,7 +495,7 @@ def run_fuzzer(args):
                         key, value = pair.split('=', 1)
                         field_values[key] = value
 
-            results = asyncio.run(
+            asyncio.run(
                 fuzzer.fuzz_form(
                     form_url=args.form_url,
                     param_to_fuzz=args.param,
@@ -514,8 +517,10 @@ def run_fuzzer(args):
 
     except FileNotFoundError:
         print(f"{RED}[!] Erreur: Wordlist non trouvée: {args.wordlist}{RESET}")
+
     except KeyboardInterrupt:
         print(f"\n{YELLOW}[!] Interruption par l'utilisateur{RESET}")
+
     except Exception as e:
         print(f"{RED}[!] Erreur: {e}{RESET}")
 

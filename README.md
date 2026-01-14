@@ -1,2 +1,10 @@
 # ExeGOAT
-My personnal Exegol Wrapper in Python
+## Documentation : 
+
+```bash
+make html
+```
+
+```powershell
+    .\make.bat html
+```
