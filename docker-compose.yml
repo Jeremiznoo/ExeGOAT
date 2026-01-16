@@ -6,7 +6,7 @@ services:
     container_name: exegoat
     hostname: exegoat-container
     
-    # Accès réseau complet de l'hôte
+    # Accès réseau l'hôte
     network_mode: host
     
     # Variables d'environnement
@@ -20,7 +20,7 @@ services:
     
     # Volumes partagés
     volumes:
-      # X11 pour GUI (Wireshark)
+      # X11 pour GUI 
       - /tmp/.X11-unix:/tmp/.X11-unix:ro
       
       # Données persistantes
@@ -28,10 +28,10 @@ services:
       - ./wordlists:/home/exegoat/wordlists
       - ./output:/home/exegoat/output
       
-      - ./tools:/opt/exegoat/tools
-      - ./main.py:/opt/exegoat/main.py
+#      - ./tools:/opt/exegoat/tools
+#      - ./main.py:/opt/exegoat/main.py
     
-    # Capacités réseau pour capture et scan
+    # Capacités réseau capture et scan
     cap_add:
       - NET_RAW
       - NET_ADMIN
