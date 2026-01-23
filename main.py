@@ -171,6 +171,7 @@ def main():
     )
     brute_grp = parser_brute.add_argument_group('Options BruteGOAT')
     brute_grp.add_argument('--service', choices=['ssh', 'ftp'], help='Service (si non détecté via protocole://)')
+    brute_grp.add_argument('--port', type=int, help='Port du service (Optionnel)')
 
 
     # ═══════════════════════════════════════════════════════
