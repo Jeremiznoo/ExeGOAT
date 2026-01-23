@@ -1,7 +1,0 @@
-admin
-backup
-test
-config
-.git
-api
-upload
