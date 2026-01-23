@@ -23,6 +23,14 @@ class BruteModule(abc.ABC):
     Classe abstraite pour les modules de brute-force
     """
     def __init__(self, target, port, timeout=5):
+        """
+        Initialise le module de base
+        
+        Args:
+            target (str): Adresse de la cible
+            port (int): Port du service
+            timeout (int): Temps d'attente maximum en secondes (défaut: 5)
+        """
         self.target = target
         self.port = port
         self.timeout = timeout
@@ -31,7 +39,13 @@ class BruteModule(abc.ABC):
     def attempt_login(self, username, password):
         """
         Tente une connexion avec username/password.
-        Retourne True si succès, False sinon.
+        
+        Args:
+            username (str): Nom d'utilisateur à tester
+            password (str): Mot de passe à tester
+            
+        Returns:
+            bool: True si la connexion est réussie, False sinon
         """
         pass
 
@@ -40,6 +54,16 @@ class SSHBrute(BruteModule):
     Module de brute-force SSH basé sur Paramiko
     """
     def attempt_login(self, username, password):
+        """
+        Tente une connexion SSH avec paramiko
+        
+        Args:
+            username (str): Nom d'utilisateur
+            password (str): Mot de passe
+            
+        Returns:
+            bool: True si authentification réussie, False sinon
+        """
         if not paramiko_available:
             return False
         
@@ -72,6 +96,16 @@ class FTPBrute(BruteModule):
     Module de brute-force FTP basé sur ftplib
     """
     def attempt_login(self, username, password):
+        """
+        Tente une connexion FTP
+        
+        Args:
+            username (str): Nom d'utilisateur
+            password (str): Mot de passe
+            
+        Returns:
+            bool: True si authentification réussie, False sinon
+        """
         import ftplib
         try:
             ftp = ftplib.FTP()
@@ -87,6 +121,18 @@ class BruteForcer:
     Moteur principal de brute-force multi-threadé
     """
     def __init__(self, service, target, port, user_list, pass_list, threads=10, stop_on_success=False):
+        """
+        Initialise le moteur de brute-force
+        
+        Args:
+            service (str): Service à attaquer ('ssh' ou 'ftp')
+            target (str): Adresse de la cible
+            port (int): Port du service
+            user_list (list): Liste des utilisateurs à tester
+            pass_list (list): Liste des mots de passe à tester
+            threads (int): Nombre de threads simultanés (défaut: 10)
+            stop_on_success (bool): Arrêter le scan dès qu'un mot de passe est trouvé (défaut: False)
+        """
         self.service = service
         self.target = target
         self.port = port
@@ -116,7 +162,14 @@ class BruteForcer:
 
     def worker(self, queue):
         """
-        Thread worker
+        Fonction exécutée par chaque thread (Non utilisée dans l'implémentation actuelle 
+        qui utilise une fonction interne thread_target)
+        
+        Args:
+            queue (queue.Queue): File d'attente des tâches
+            
+        Returns:
+            None
         """
         module = self.module_class(self.target, self.port)
         
@@ -132,6 +185,12 @@ class BruteForcer:
                 break
 
     def run(self):
+        """
+        Lance le processus de brute-force multi-threadé
+        
+        Returns:
+            None
+        """
         if not self.module_class:
             return
 
@@ -200,7 +259,17 @@ class BruteForcer:
 
 def run_brutegoat(args):
     """
-    Entrée pour main.py
+    Point d'entrée principal pour l'outil BruteGOAT
+    
+    Args:
+        args (argparse.Namespace): Arguments parsés de la ligne de commande contenant:
+            - username/user_list: Utilisateurs cibles
+            - password/pass_list: Mots de passe cibles
+            - url/service/port: Cible
+            - threads: Nombre de threads
+            
+    Returns:
+        None
     """
     users = []
     passwords = []

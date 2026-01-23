@@ -39,12 +39,29 @@ except ImportError:
 # ==========================================
 
 class CustomDNSResolver:
+    """
+    Résolveur DNS personnalisé pour les requêtes PTR manuelles
+    """
     def __init__(self, dns_server):
+        """
+        Initialise le résolveur
+        
+        Args:
+            dns_server (str): Adresse IP du serveur DNS
+        """
         self.dns_server = dns_server
         self.port = 53
     
     def resolve_ptr(self, ip_address):
-        """Tente une résolution inverse via un serveur DNS spécifique"""
+        """
+        Tente une résolution inverse (PTR) via un serveur DNS spécifique sans utiliser le système
+        
+        Args:
+            ip_address (str): Adresse IP à résoudre
+            
+        Returns:
+            str: Nom de domaine trouvé ou None
+        """
         if not self.dns_server: return None
         try:
             reversed_ip = '.'.join(reversed(ip_address.split('.'))) + ".in-addr.arpa"
@@ -67,8 +84,20 @@ class CustomDNSResolver:
         return None
 
 class NetBIOSQuery:
+    """
+    Classe pour effectuer des requêtes NetBIOS (NBNS)
+    """
     def __init__(self): self.port = 137
     def get_info(self, ip):
+        """
+        Récupère les informations NetBIOS d'une IP
+        
+        Args:
+            ip (str): Adresse IP cible
+            
+        Returns:
+            tuple: (Nom NetBIOS, Adresse MAC) ou (None, None)
+        """
         try:
             packet = b'\x80\x96\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x20\x43\x4b\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x00\x00\x21\x00\x01'
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -84,11 +113,26 @@ class NetBIOSQuery:
         return None, None
 
 class MACVendorLookup:
+    """
+    Classe pour la recherche de fournisseurs MAC via API externe
+    """
     def __init__(self):
+        """
+        Initialise le lookup avec un cache
+        """
         self.cache = {}  # Cache pour éviter les requêtes répétées
     
     def get_vendor(self, mac, force_refresh=False):
-        """Récupère le vendor UNIQUEMENT via l'API macvendorlookup.com"""
+        """
+        Récupère le vendor UNIQUEMENT via l'API macvendorlookup.com
+        
+        Args:
+            mac (str): Adresse MAC (format XX:XX:XX:XX:XX:XX)
+            force_refresh (bool): Forcer la requête même si en cache
+            
+        Returns:
+            str: Nom du constructeur ou chaîne vide
+        """
         if not mac or mac == "N/A": 
             return ""
         
@@ -129,7 +173,15 @@ class MACVendorLookup:
         return vendor or ""
     
     def _try_macvendorlookup(self, mac_format):
-        """Essaie l'API macvendorlookup.com (https://www.macvendorlookup.com/api)"""
+        """
+        Essaie l'API macvendorlookup.com (https://www.macvendorlookup.com/api)
+        
+        Args:
+            mac_format (str): Adresse MAC ou OUI (nettoyée ou non)
+            
+        Returns:
+            str: Nom du constructeur ou None
+        """
         try:
             # Nettoyer le format MAC (enlever tous les séparateurs pour l'URL)
             mac_clean = str(mac_format).replace(":", "").replace("-", "").replace(".", "").upper()
@@ -184,7 +236,16 @@ class MACVendorLookup:
 # ==========================================
 
 class NetworkScannerGUI:
+    """
+    Interface graphique principale pour le scanner réseau nGOAT
+    """
     def __init__(self, root):
+        """
+        Initialise l'application GUI
+        
+        Args:
+            root (tk.Tk): Fenêtre racine Tkinter
+        """
         self.root = root
         self.root.title("nGOAT Scanner")
         self.root.geometry("1400x850")
@@ -202,6 +263,9 @@ class NetworkScannerGUI:
         self.setup_layout()
 
     def setup_style(self):
+        """
+        Configure les styles ttk pour l'interface
+        """
         style = ttk.Style()
         style.theme_use('clam')
         style.configure("Sidebar.TFrame", background=self.colors['sidebar'])
@@ -213,6 +277,9 @@ class NetworkScannerGUI:
         style.map("Treeview", background=[("selected", self.colors['accent'])])
 
     def setup_layout(self):
+        """
+        Organise la disposition principale des widgets
+        """
         container = ttk.Frame(self.root)
         container.pack(fill=tk.BOTH, expand=True)
         
@@ -271,6 +338,14 @@ class NetworkScannerGUI:
         self.tree.tag_configure('online', foreground=self.colors['text_dark'])
 
     def create_field(self, parent, label, var):
+        """
+        Crée un champ de saisie labellisé
+        
+        Args:
+            parent (ttk.Widget): Widget parent
+            label (str): Texte du label
+            var (tk.StringVar): Variable associée
+        """
         f = ttk.Frame(parent, style="Card.TFrame")
         f.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
         ttk.Label(f, text=label, font=("Segoe UI", 9), background="white").pack(anchor="w")
@@ -281,7 +356,13 @@ class NetworkScannerGUI:
 # ==========================================
 
     def get_snmp_arp_table(self):
-        """Récupère la table ARP (ipNetToMediaPhysAddress) via SNMP"""
+        """
+        Récupère la table ARP (ipNetToMediaPhysAddress) via SNMP
+        Met à jour le cache interne self.snmp_mac_cache
+        
+        Returns:
+            None
+        """
         target = self.snmp_target_var.get()
         community = self.snmp_community_var.get()
         if not target or not community: return
@@ -328,7 +409,16 @@ class NetworkScannerGUI:
             self.log("Erreur SNMP: Impossible de récupérer la table ARP")
     
     def _get_snmp_via_snmpwalk(self, target, community):
-        """Récupère la table ARP via snmpwalk (méthode 1 - Linux/Unix)"""
+        """
+        Récupère la table ARP via snmpwalk (méthode 1 - Linux/Unix)
+        
+        Args:
+            target (str): IP du routeur
+            community (str): Communauté SNMP
+            
+        Returns:
+            dict: Dictionnaire {IP: MAC} ou None en cas d'échec
+        """
         try:
             oid_mac = '1.3.6.1.2.1.4.22.1.2'
             cmd = ['snmpwalk', '-v', '2c', '-c', community, target, oid_mac]
@@ -381,7 +471,16 @@ class NetworkScannerGUI:
             return None
     
     def _get_snmp_via_pysnmp(self, target, community):
-        """Récupère la table ARP via pysnmp (méthode 2 - Windows/Linux)"""
+        """
+        Récupère la table ARP via pysnmp (méthode 2 - Windows/Linux)
+        
+        Args:
+            target (str): IP du routeur
+            community (str): Communauté SNMP
+            
+        Returns:
+            dict: Dictionnaire {IP: MAC} ou None en cas d'échec
+        """
         try:
             # Exécuter la coroutine de manière synchrone
             # Gérer le cas où un event loop est déjà en cours
@@ -402,7 +501,16 @@ class NetworkScannerGUI:
             return None
     
     async def _async_get_snmp_pysnmp(self, target, community):
-        """Récupère la table ARP via pysnmp (asyncio)"""
+        """
+        Récupère la table ARP via pysnmp (asyncio)
+        
+        Args:
+            target (str): IP du routeur
+            community (str): Communauté SNMP
+            
+        Returns:
+            dict: Dictionnaire {IP: MAC} ou None en cas d'échec
+        """
         mac_results = {}
         oid_mac = '1.3.6.1.2.1.4.22.1.2'
         
@@ -474,6 +582,15 @@ class NetworkScannerGUI:
         return mac_results if mac_results else None
 
     def scan_host(self, ip):
+        """
+        Analyse un hôte pour déterminer s'il est unique et récupérer ses infos
+        
+        Args:
+            ip (str ou IPv4Address): Adresse IP à scanner
+            
+        Returns:
+            None
+        """
         ip_str = str(ip)
         is_online, os_type = self.ping_host(ip_str)
         
@@ -545,7 +662,13 @@ class NetworkScannerGUI:
             threading.Thread(target=self._scan_ports_async, args=(ip_str,), daemon=True).start()
     
     def _update_vendor_async(self, ip_str, mac):
-        """Met à jour le vendor de manière asynchrone"""
+        """
+        Met à jour le vendor de manière asynchrone pour ne pas bloquer l'UI
+        
+        Args:
+            ip_str (str): Adresse IP de l'hôte
+            mac (str): Adresse MAC
+        """
         # Forcer une nouvelle recherche (ne pas utiliser le cache vide)
         vendor = self.mac_lookup.get_vendor(mac, force_refresh=True)
         
@@ -569,13 +692,26 @@ class NetworkScannerGUI:
         self.root.after(0, lambda ip=ip_str, v=final_vendor: self._update_tree_vendor(ip, v))
     
     def _scan_ports_async(self, ip_str):
-        """Scanne les ports de manière asynchrone"""
+        """
+        Scanne les ports de manière asynchrone
+        
+        Args:
+            ip_str (str): Adresse IP cible
+        """
         open_ports = self.scan_ports(ip_str)
         ports_str = ", ".join(map(str, open_ports)) if open_ports else "Aucun"
         self.root.after(0, lambda ip=ip_str, p=ports_str: self._update_tree_ports(ip, p))
     
     def scan_ports(self, ip_str):
-        """Scanne les ports communs sur un hôte"""
+        """
+        Scanne les ports TCP communs sur un hôte
+        
+        Args:
+            ip_str (str): Adresse IP cible
+            
+        Returns:
+            list: Liste des ports ouverts (int)
+        """
         common_ports = [21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 993, 995, 3389, 8080]
         open_ports = []
         
@@ -606,7 +742,13 @@ class NetworkScannerGUI:
                 break
     
     def _update_tree_vendor(self, ip_str, vendor):
-        """Met à jour uniquement le vendor dans le treeview"""
+        """
+        Met à jour uniquement le vendor dans le treeview
+        
+        Args:
+            ip_str (str): IP identifiant la ligne
+            vendor (str): Nouveau nom de vendeur
+        """
         for item in self.tree.get_children():
             values = list(self.tree.item(item)['values'])
             if len(values) > 1 and values[1] == ip_str:
@@ -617,6 +759,15 @@ class NetworkScannerGUI:
                 break
 
     def ping_host(self, ip):
+        """
+        Envoie un ping ICMP pour vérifier la présence et estimer l'OS via le TTL
+        
+        Args:
+            ip (str): Adresse IP à pinger
+            
+        Returns:
+            tuple: (bool is_online, str os_guess)
+        """
         param = '-n' if platform.system().lower() == 'windows' else '-c'
         try:
             out = subprocess.check_output(['ping', param, '1', '-w', '500', ip], 
@@ -630,6 +781,15 @@ class NetworkScannerGUI:
         return False, ""
 
     def get_local_arp(self, ip):
+        """
+        Récupère l'adresse MAC depuis la table ARP locale du système
+        
+        Args:
+            ip (str): Adresse IP cible
+            
+        Returns:
+            str: Adresse MAC ou None
+        """
         try:
             out = subprocess.check_output(['arp', '-a', ip], creationflags=0x08000000 if platform.system() == 'Windows' else 0).decode()
             m = re.search(r'([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})', out)
@@ -637,6 +797,9 @@ class NetworkScannerGUI:
         except: return None
 
     def start_single_scan(self):
+        """
+        Démarre un scan unique sur la plage sélectionnée
+        """
         if self.scanning: return
         self.scanning = True
         self.btn_scan.config(state=tk.DISABLED); self.btn_stop.config(state=tk.NORMAL)
@@ -644,6 +807,9 @@ class NetworkScannerGUI:
         threading.Thread(target=self.run_main_scan, daemon=True).start()
 
     def run_main_scan(self):
+        """
+        Fonction principale du scan exécutée dans un thread séparé
+        """
         # 1. SNMP Table Pre-load
         self.get_snmp_arp_table()
         
@@ -689,10 +855,20 @@ class NetworkScannerGUI:
                 if not self.continuous_mode: break
                 time.sleep(1)
     def update_tree(self, data):
+        """
+        Met à jour ou insère une ligne dans le tableau de résultats
+        
+        Args:
+            data (tuple): Données de la ligne (Status, IP, OS, Hostname, MAC, Vendor, Ports)
+        """
         for item in self.tree.get_children():
             if self.tree.item(item)['values'][1] == data[1]: self.tree.delete(item)
         self.tree.insert('', 'end', values=data, tags=('online',))
     def export_csv(self):
+        """
+        Exporte les résultats actuels vers un fichier CSV
+        Ouvre une boite de dialogue pour choisir le fichier.
+        """
         f = filedialog.asksaveasfilename(defaultextension=".csv")
         if f:
             with open(f, 'w', newline='') as file:
@@ -700,6 +876,9 @@ class NetworkScannerGUI:
                 for i in self.tree.get_children(): w.writerow(self.tree.item(i)['values'])
 
 def run_gui():
+    """
+    Fonction point d'entrée pour lancer l'interface graphique
+    """
     root = tk.Tk()
     app = NetworkScannerGUI(root)
     root.mainloop()
