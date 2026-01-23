@@ -1,30 +1,42 @@
 FROM debian:13-slim
 
-ENV DEBIAN_FRONTEND=noninteractive
+# Supprimer action apt
+ENV DEBIAN_FRONTEND=noninteractive 
+# GUI
 ENV QT_X11_NO_MITSHM=1
+# Python sortie
 ENV PYTHONUNBUFFERED=1
+# Caido Version
 ENV CAIDO_VERSION=0.54.1
+# erreur debus session usier
 ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
+# Format zsh
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+ENV LC_ALL=en_US.UTF-8
 
-RUN apt-get update && apt-get install -y \
+# Paquet Systeme
+RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    zsh \
+    curl \
+    tmux \
     # Python
     python3 \
     python3-venv \
     python3-pip \
     python3-dev \
     build-essential \
-    # Outils réseau
+    # Réseau
     wireshark \
     fping \
     iputils-ping \
-    # X11 / GUI
+    # X11 app GUI
     dbus-x11 \
     x11-apps \
-    # Caido
     wget \
     ca-certificates \
-    # Dépendances Caido / Chromium
+    # Dépendances
     libnss3 \
     libnspr4 \
     libatk1.0-0 \
@@ -42,70 +54,97 @@ RUN apt-get update && apt-get install -y \
     libcairo2 \
     libasound2t64 \
     libatspi2.0-0 \
-    # Chromium
+    # Outils
     chromium \
-    # Outil
     hashcat \
     dnsenum \
-    
-    # OpenCL
     ocl-icd-libopencl1 \
     pocl-opencl-icd \
+    locales \
+    # Dépendances Impacket & NetExec
+    libssl-dev \
+    libffi-dev \
+    libkrb5-dev \
+    libxml2-dev \
+    libxslt1-dev \
     && rm -rf /var/lib/apt/lists/*
 
-#Sqlmap 
-RUN git clone --depth=1 https://github.com/sqlmapproject/sqlmap.git /opt/sqlmap && \
-    ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap
-# Wireshark permissions
-RUN setcap cap_net_raw,cap_net_admin=eip /usr/bin/dumpcap
+RUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
+    locale-gen en_US.UTF-8
 
-# Installer Caido
+# SqlMAP
+RUN git clone https://github.com/sqlmapproject/sqlmap.git /opt/sqlmap && \
+    ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap
+
+# Caido
 RUN wget -q https://caido.download/releases/v${CAIDO_VERSION}/caido-desktop-v${CAIDO_VERSION}-linux-x86_64.tar.gz -O /tmp/caido.tar.gz && \
     tar -xzf /tmp/caido.tar.gz -C /opt && \
     mv /opt/caido-desktop-* /opt/caido && \
     ln -s /opt/caido/caido /usr/local/bin/caido && \
     rm /tmp/caido.tar.gz
 
-# User
+# Clone Impacket
+RUN git clone https://github.com/fortra/impacket.git /opt/impacket
+
+# Create user
 RUN groupadd -r wireshark 2>/dev/null || true && \
-    useradd -m -s /bin/bash exegoat && \
+    useradd -m -s /usr/bin/zsh exegoat && \
     usermod -aG wireshark exegoat
 
-# Dossiers ExeGOAT
-RUN mkdir -p /opt/exegoat/wordlists /opt/exegoat/output /opt/exegoat/pcaps && \
-    chown -R exegoat:exegoat /opt/exegoat
-
+# ExeGOAT
 WORKDIR /opt/exegoat
+
+#  fichiers locaux vers l'image
 COPY --chown=exegoat:exegoat requirements.txt .
 COPY --chown=exegoat:exegoat main.py .
-COPY --chown=exegoat:exegoat tools/ ./tools/
+COPY --chown=exegoat:exegoat ./tools ./tools
 
-# Python venv
+# Setup phyton Impacket et NetExec dans le venv
 RUN python3 -m venv /opt/exegoat/venv && \
     /opt/exegoat/venv/bin/pip install --upgrade pip setuptools wheel && \
-    /opt/exegoat/venv/bin/pip install --no-cache-dir -r requirements.txt
+    /opt/exegoat/venv/bin/pip install /opt/impacket && \
+    /opt/exegoat/venv/bin/pip install git+https://github.com/Pennyw0rth/NetExec.git && \
+    chown -R exegoat:exegoat /opt/exegoat/venv
 
-# Entrypoint ExeGOAT
-RUN echo '#!/bin/bash' > /usr/local/bin/exegoat && \
-    echo '/opt/exegoat/venv/bin/python /opt/exegoat/main.py "$@"' >> /usr/local/bin/exegoat && \
-    chmod +x /usr/local/bin/exegoat
+# Install requirment.txt
+RUN if [ -f "requirements.txt" ]; then /opt/exegoat/venv/bin/pip install -r requirements.txt; fi
 
-# User
+# Impaket 
+RUN mkdir -p /usr/local/bin && \
+    cd /opt/impacket/examples && \
+    for script in *.py; do \
+        script_name="${script%.py}"; \
+        echo '#!/bin/bash' > "/usr/local/bin/$script_name"; \
+        echo "/opt/exegoat/venv/bin/python3 /opt/impacket/examples/$script \"\$@\"" >> "/usr/local/bin/$script_name"; \
+        chmod +x "/usr/local/bin/$script_name"; \
+    done
+
+# netExec
+RUN echo '#!/bin/bash' > /usr/local/bin/nxc && \
+    echo '/opt/exegoat/venv/bin/netexec "$@"' >> /usr/local/bin/nxc && \
+    chmod +x /usr/local/bin/nxc && \
+    ln -s /usr/local/bin/nxc /usr/local/bin/netexec
+
+# Conf user
 USER exegoat
 WORKDIR /home/exegoat
 
-# Dossiers user
-RUN mkdir -p ~/wordlists ~/output ~/pcaps ~/.caido
+# ZSH
+RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
 
-# Alias
-RUN echo '# ExeGOAT aliases' >> ~/.bashrc && \
-    echo 'alias ws="wireshark"' >> ~/.bashrc && \
-    echo 'alias caido="/usr/local/bin/caido"' >> ~/.bashrc
+# Config Zsh
+RUN sed -i 's/ZSH_THEME="robbyrussell"/ZSH_THEME="agnoster"/' ~/.zshrc && \
+    echo 'export PATH="/opt/exegoat/venv/bin:$PATH"' >> ~/.zshrc && \
+    echo 'alias ws="wireshark"' >> ~/.zshrc && \
+    echo 'alias caido="/usr/local/bin/caido"' >> ~/.zshrc && \
+    echo 'alias ll="ls -lah"' >> ~/.zshrc && \
+    echo 'alias exegoat="python3 /opt/exegoat/main.py"' >> ~/.zshrc && \
+    echo 'alias cme="nxc"' >> ~/.zshrc
 
-# PATH du venv
+RUN mkdir -p ~/wordlists ~/output ~/pcaps ~/.caido ~/.nxc
+
 ENV PATH="/opt/exegoat/venv/bin:${PATH}"
 
-# Exposer le port Caido
-EXPOSE 8080
+EXPOSE 8080 445 139 88 389 636 1433 3389 5985 5986
 
-CMD ["/bin/bash"]
+CMD ["/usr/bin/zsh"]

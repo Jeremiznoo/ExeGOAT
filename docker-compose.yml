@@ -2,9 +2,11 @@ services:
   exegoat:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: dockerfile
     container_name: exegoat
     hostname: exegoat-container
+    devices:
+      - /dev/dri:/dev/dri # Partage de la CG
     
     # Accès réseau l'hôte
     network_mode: host
@@ -17,12 +19,13 @@ services:
       - QT_QPA_PLATFORM=xcb
       - QT_X11_NO_MITSHM=1
       - PYTHONUNBUFFERED=1
+      - LIBGL_ALWAYS_SOFTWARE=1 
     
     # Volumes partagés
     volumes:
       # X11 pour GUI 
       - /tmp/.X11-unix:/tmp/.X11-unix:ro
-      
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
       # Données persistantes
       - ./pcaps:/home/exegoat/pcaps
       - ./wordlists:/home/exegoat/wordlists
