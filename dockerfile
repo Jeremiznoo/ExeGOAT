@@ -26,6 +26,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     python3-pip \
     python3-dev \
+    python3-tk \
+    tk \
+    tk-dev \
     build-essential \
     # Réseau
     wireshark \
@@ -71,6 +74,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
     locale-gen en_US.UTF-8
+
 
 # SqlMAP
 RUN git clone https://github.com/sqlmapproject/sqlmap.git /opt/sqlmap && \
@@ -128,6 +132,7 @@ RUN echo '#!/bin/bash' > /usr/local/bin/nxc && \
 # Conf user
 USER exegoat
 WORKDIR /home/exegoat
+RUN git clone https://github.com/danielmiessler/SecLists.git
 
 # ZSH
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
