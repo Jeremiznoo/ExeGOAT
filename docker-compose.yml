@@ -1,0 +1,51 @@
+services:
+  exegoat:
+    build:
+      context: .
+      dockerfile: dockerfile
+    container_name: exegoat
+    hostname: exegoat-container
+    devices:
+      - /dev/dri:/dev/dri # Partage de la CG
+    
+    # Accès réseau l'hôte
+    network_mode: host
+    
+    # Variables d'environnement
+    env_file:
+      - .env
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_QPA_PLATFORM=xcb
+      - QT_X11_NO_MITSHM=1
+      - PYTHONUNBUFFERED=1
+      - LIBGL_ALWAYS_SOFTWARE=1 
+    
+    # Volumes partagés
+    volumes:
+      # X11 pour GUI 
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+      # Données persistantes
+      - ./pcaps:/home/exegoat/pcaps
+      - ./wordlists:/home/exegoat/wordlists
+      - ./output:/home/exegoat/output
+      
+#      - ./tools:/opt/exegoat/tools
+#      - ./main.py:/opt/exegoat/main.py
+    
+    # Capacités réseau capture et scan
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    
+    # Sécurité
+    security_opt:
+      - seccomp:unconfined
+    
+    # Mode interactif
+    stdin_open: true
+    tty: true
+    
+    # Redémarrage automatique
+    restart: unless-stopped
