@@ -72,7 +72,7 @@ Table des matières
 
    modules/main
    modules/fuzz
-   modules/scanner_ngoat
+   modules/ngoat
    modules/ftpgoat
    modules/brutegoat
 

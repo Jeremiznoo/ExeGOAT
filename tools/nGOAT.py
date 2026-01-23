@@ -424,7 +424,7 @@ class NetworkScannerGUI:
         # Col 1: Scan Target & DNS
         col1 = ttk.Frame(grid_frame, style="Card.TFrame")
         col1.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
-        self.create_field(col1, "Plage IP (CIDR)", self.ip_range_var)
+        self.create_field(col1, "Plage IP", self.ip_range_var)
         self.create_field(col1, "Serveur DNS", self.dns_ip_var)
 
         # Col 2: Options
