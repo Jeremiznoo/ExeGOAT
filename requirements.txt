@@ -3,3 +3,6 @@ httpx
 bs4
 sphinx
 sphinx-rtd-theme
+Pillow
+pysnmp
+paramiko

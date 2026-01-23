@@ -3,7 +3,7 @@ import asyncio
 import sys
 from colorama import init, Fore, Style
 from tools.fuzz import WebFuzzer, parse_status_codes, transform_payloads
-from tools.scanner_nGOAT import run_gui
+from tools.nGOAT import run_gui
 from tools.FTPGOAT import run_ftp_scanner
 from tools.BruteGOAT import run_brutegoat
 
