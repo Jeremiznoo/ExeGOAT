@@ -248,10 +248,10 @@ class NetworkScannerGUI:
         cfg = ttk.Frame(main, style="Card.TFrame", padding=15)
         cfg.pack(fill=tk.X, pady=(0, 20))
         
-        self.ip_range_var = tk.StringVar(value="10.99.12.0/23")
-        self.snmp_target_var = tk.StringVar(value="10.99.0.254")
-        self.snmp_community_var = tk.StringVar(value="CYBER_ARP")
-        self.dns_ip_var = tk.StringVar(value="10.199.156.50")
+        self.ip_range_var = tk.StringVar(value="10.0.0.0/23")
+        self.snmp_target_var = tk.StringVar(value="10.0.0.1")
+        self.snmp_community_var = tk.StringVar(value="public")
+        self.dns_ip_var = tk.StringVar(value="1.1.1.1")
         
         top_row = ttk.Frame(cfg, style="Card.TFrame")
         top_row.pack(fill=tk.X)
@@ -261,7 +261,7 @@ class NetworkScannerGUI:
         bot_row = ttk.Frame(cfg, style="Card.TFrame")
         bot_row.pack(fill=tk.X, pady=10)
         self.create_field(bot_row, "Communauté", self.snmp_community_var)
-        self.create_field(bot_row, "DNS AD", self.dns_ip_var)
+        self.create_field(bot_row, "DNS", self.dns_ip_var)
 
         # Treeview
         cols = ('Statut', 'IP', 'OS', 'Hostname', 'MAC', 'Vendor', 'Ports')
@@ -699,7 +699,10 @@ class NetworkScannerGUI:
                 w = csv.writer(file); w.writerow(('Statut', 'IP', 'OS', 'Hostname', 'MAC', 'Vendor', 'Ports'))
                 for i in self.tree.get_children(): w.writerow(self.tree.item(i)['values'])
 
-if __name__ == "__main__":
+def run_gui():
     root = tk.Tk()
     app = NetworkScannerGUI(root)
     root.mainloop()
+
+if __name__ == "__main__":
+    run_gui()

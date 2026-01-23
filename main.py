@@ -1,7 +1,11 @@
 import argparse
 import asyncio
+import sys
 from colorama import init, Fore, Style
 from tools.fuzz import WebFuzzer, parse_status_codes, transform_payloads
+from tools.scanner_nGOAT import run_gui
+from tools.FTPGOAT import run_ftp_scanner
+from tools.BruteGOAT import run_brutegoat
 
 BLUE = Fore.BLUE
 WHITE = Fore.WHITE
@@ -26,237 +30,178 @@ def main():
 
     print(BANNER)
 
+    # ═══════════════════════════════════════════════════════
+    # PARENT PARSERS (Options communes)
+    # ═══════════════════════════════════════════════════════
+
+    # --- Parent: Common (Options globales) ---
+    parent_common = argparse.ArgumentParser(add_help=False)
+    common_group = parent_common.add_argument_group('options communes')
+    common_group.add_argument(
+        'target',
+        nargs='?',
+        help='Cible (URL, IP, ou protocole://cible)'
+    )
+    common_group.add_argument(
+        '-u', '--url',
+        type=str,
+        required=False,
+        metavar='URL',
+        help='URL cible (alternative à l\'argument positionnel)'
+    )
+    common_group.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        help='Mode verbeux'
+    )
+    common_group.add_argument(
+        '-q', '--quiet',
+        action='store_true',
+        help='Mode silencieux'
+    )
+
+    # --- Parent: Authentication (Hydra-style) ---
+    parent_auth = argparse.ArgumentParser(add_help=False)
+    auth_group = parent_auth.add_argument_group('Authentication')
+    auth_group.add_argument('-l', '--username', type=str, help="Login unique (-l)")
+    auth_group.add_argument('-p', '--password', type=str, help='Mot de passe unique (-p)')
+    auth_group.add_argument('-L', '--user-list', type=str, help="Fichier liste utilisateurs (-L)")
+    auth_group.add_argument('-P', '--pass-list', type=str, help='Fichier liste mots de passe (-P)')
+
+
+    # ═══════════════════════════════════════════════════════
+    # PARSER PRINCIPAL & SUBPARSERS
+    # ═══════════════════════════════════════════════════════
+
     parser = argparse.ArgumentParser(
         prog="ExeGOAT",
         description="Suite d'outils de sécurité web",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    # ═══════════════════════════════════════════════════════
-    # SÉLECTION DE L'OUTIL
-    # ═══════════════════════════════════════════════════════
-
-    parser.add_argument(
-        'tool',
-        type=str,
-        choices=['fuzzer',],
-        help='Outil à utiliser'
+    subparsers = parser.add_subparsers(
+        dest='tool',
+        title='Outils disponibles',
+        description='Outil à utiliser',
+        help='Utilisez "main.py <outil> -h" pour l\'aide spécifique à un outil',
+        required=True
     )
 
     # ═══════════════════════════════════════════════════════
-    # OPTIONS COMMUNES
+    # SUBPARSER: FUZZER
     # ═══════════════════════════════════════════════════════
-
-    common = parser.add_argument_group('options communes')
-
-    common.add_argument(
-        '-u', '--url',
-        type=str,
-        required=True,
-        metavar='URL',
-        help='URL cible (ex: http://example.com ou http://example.com/path)'
+    parser_fuzzer = subparsers.add_parser(
+        'fuzzer',
+        parents=[parent_common],
+        help='Fuzzer web / énumération de répertoires',
+        description='Fuzzer web avancé (dir, param, post, form)',
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
-    common.add_argument(
-        '-v', '--verbose',
-        action='store_true',
-        help='Mode verbeux (afficher plus de détails)'
-    )
+    # ... Fuzzer Required ...
+    fuzz_req = parser_fuzzer.add_argument_group('Requis')
+    fuzz_req.add_argument('-w', '--wordlist', type=str, metavar='FILE', help='Fichier wordlist')
 
-    common.add_argument(
-        '-q', '--quiet',
-        action='store_true',
-        help='Mode silencieux (afficher uniquement les résultats)'
-    )
+    # ... Fuzzer Mode ...
+    fuzz_mode = parser_fuzzer.add_argument_group('Mode de fuzzing')
+    fuzz_mode.add_argument('-m', '--mode', choices=['dir', 'param', 'post', 'form'], default='dir', help='Mode (dir, param, post, form)')
+    fuzz_mode.add_argument('--param', type=str, metavar='PARAM', help='Paramètre GET/POST à fuzzer')
+    fuzz_mode.add_argument('--post-data', type=str, metavar='DATA', help='Données POST (key=v&k=v)')
+    fuzz_mode.add_argument('--form-url', type=str, metavar='URL', help='URL du formulaire')
+    fuzz_mode.add_argument('--field-values', type=str, metavar='DATA', help='Valeurs champs fixes du form')
+
+    # ... Fuzzer Network ...
+    fuzz_net = parser_fuzzer.add_argument_group('Réseau')
+    fuzz_net.add_argument('-t', '--threads', type=int, default=50, help='Threads (Défaut: 50)')
+    fuzz_net.add_argument('--timeout', type=float, default=5.0, help='Timeout (s)')
+    fuzz_net.add_argument('--follow-redirects', action='store_true', help='Suivre redirections')
+    fuzz_net.add_argument('--cookie', type=str, metavar='COOKIE', help='Cookies (k=v; k=v)')
+    fuzz_net.add_argument('--delay', type=float, metavar='SEC', help='Délai entre requêtes')
+
+    # ... Fuzzer Filters ...
+    fuzz_filt = parser_fuzzer.add_argument_group('Filtres')
+    fuzz_filt.add_argument('--hide-codes', type=str, metavar='CODES', help='Cacher codes (404,403)')
+    fuzz_filt.add_argument('--show-codes', type=str, metavar='CODES', help='Montrer codes (200,301)')
+
+    # ... Fuzzer Payloads ...
+    fuzz_pay = parser_fuzzer.add_argument_group('Payloads')
+    fuzz_pay.add_argument('--extensions', type=str, help='Extensions (php,html)')
+    fuzz_pay.add_argument('--prefix', type=str, help='Préfixe')
+    fuzz_pay.add_argument('--suffix', type=str, help='Suffixe')
+    fuzz_pay.add_argument('--xss-marker', type=str, help='Marqueur XSS')
+
+    # ... Fuzzer Export ...
+    fuzz_out = parser_fuzzer.add_argument_group('Export')
+    fuzz_out.add_argument('-o', '--output', type=str, help='Fichier de sortie')
+    fuzz_out.add_argument('--auto-export', action='store_true', help='Export auto')
 
     # ═══════════════════════════════════════════════════════
-    #  FUZZER - OBLIGATOIRES
+    # SUBPARSER: nGOAT
     # ═══════════════════════════════════════════════════════
-
-    fuzzer_required = parser.add_argument_group('fuzzer - arguments obligatoires')
-
-    fuzzer_required.add_argument(
-        '-w', '--wordlist',
-        type=str,
-        metavar='FILE',
-        help='Chemin vers le fichier wordlist (requis pour fuzzer)'
-    )
-
-    # ═══════════════════════════════════════════════════════
-    #  FUZZER - MODE DE FUZZING
-    # ═══════════════════════════════════════════════════════
-
-    fuzzer_mode = parser.add_argument_group('fuzzer - mode de fuzzing')
-
-    fuzzer_mode.add_argument(
-        '-m', '--mode',
-        type=str,
-        choices=['dir', 'param', 'post', 'form'],
-        default='dir',
-        metavar='MODE',
-        help='Fuzzing mode: dir (répertoires), param (paramètres GET), post (paramètres POST), form (formulaire auto) Défaut: dir'
-    )
-
-    fuzzer_mode.add_argument(
-        '-p', '--param',
-        type=str,
-        metavar='PARAM',
-        help='Nom du paramètre GET/POST à fuzzer (requis si mode=param/post) Ex: -p id'
-    )
-
-    fuzzer_mode.add_argument(
-        '--post-data',
-        type=str,
-        metavar='DATA',
-        help='Données POST supplémentaires (format: key1=value1&key2=value2) Ex: --post-data "username=admin&password=test"'
-    )
-
-    fuzzer_mode.add_argument(
-        '--form-url',
-        type=str,
-        metavar='URL',
-        help='URL de la page contenant le formulaire (optionnel, utilise -u par défaut) Ex: --form-url "http://example.com/login.php"'
-    )
-
-    fuzzer_mode.add_argument(
-        '--field-values',
-        type=str,
-        metavar='DATA',
-        help='Valeurs personnalisées pour les champs du formulaire (format: key1=value1&key2=value2) Ex: --field-values "username=admin&email=test@test.com"'
+    parser_ngoat = subparsers.add_parser(
+        'nGOAT',
+        parents=[parent_common],
+        help='Scanner réseau nGOAT (GUI)',
+        description='Lance l\'interface graphique de nGOAT scanner'
     )
 
     # ═══════════════════════════════════════════════════════
-    #  FUZZER - CONFIGURATION RÉSEAU
+    # SUBPARSER: ftpGOAT
     # ═══════════════════════════════════════════════════════
-
-    fuzzer_network = parser.add_argument_group('fuzzer - configuration réseau')
-
-    fuzzer_network.add_argument(
-        '-t', '--threads',
-        type=int,
-        default=50,
-        metavar='NUM',
-        help='Nombre de requêtes simultanées (concurrence) Défaut: 50'
+    parser_ftp = subparsers.add_parser(
+        'ftpGOAT',
+        parents=[parent_common, parent_auth],
+        help='Scanner FTP & Shell',
+        description='Outil FTP : check anonyme, brute-force, shell interactif'
     )
-
-    fuzzer_network.add_argument(
-        '--timeout',
-        type=float,
-        default=5.0,
-        metavar='SEC',
-        help='Timeout en secondes pour chaque requête Défaut: 5.0'
-    )
-
-    fuzzer_network.add_argument(
-        '--follow-redirects',
-        action='store_true',
-        help='Suivre les redirections HTTP (301, 302) Défaut: False'
-    )
-
-    fuzzer_network.add_argument(
-        '--cookie',
-        type=str,
-        metavar='COOKIE',
-        help='Cookie de session (format: "name1=value1; name2=value2")"'
-    )
+    ftp_grp = parser_ftp.add_argument_group('Options FTP')
+    ftp_grp.add_argument('--filter-mode', choices=['anon', 'brute', 'enum', 'all', 'shell'], default='shell', help='Mode (anon, brute, enum, all, shell). Défaut: shell')
+    ftp_grp.add_argument('--port', type=int, default=21, help='Port FTP (Défaut: 21)')
 
     # ═══════════════════════════════════════════════════════
-    #  FUZZER - FILTRES DE RÉSULTATS
+    # SUBPARSER: BruteGOAT
     # ═══════════════════════════════════════════════════════
-
-    fuzzer_filter = parser.add_argument_group('fuzzer - filtres de résultats')
-
-    fuzzer_filter.add_argument(
-        '--hide-codes',
-        type=str,
-        metavar='CODES',
-        help='Codes de statut à cacher, séparés par des virgules Ex: --hide-codes 404,403'
+    parser_brute = subparsers.add_parser(
+        'BruteGOAT',
+        parents=[parent_common, parent_auth],
+        help='Brute-Force modulaire (SSH, FTP...)',
+        description='Outil de brute-force multi-protocole style Hydra'
     )
+    brute_grp = parser_brute.add_argument_group('Options BruteGOAT')
+    brute_grp.add_argument('--service', choices=['ssh', 'ftp'], help='Service (si non détecté via protocole://)')
 
-    fuzzer_filter.add_argument(
-        '--show-codes',
-        type=str,
-        metavar='CODES',
-        help='Afficher uniquement ces codes de statut Ex: --show-codes 200,301'
-    )
 
     # ═══════════════════════════════════════════════════════
-    # FUZZER - PAYLOADS
+    # PARSING & DISPATCH
     # ═══════════════════════════════════════════════════════
-
-    fuzzer_payload = parser.add_argument_group('fuzzer - configuration des payloads')
-
-    fuzzer_payload.add_argument(
-        '--extensions',
-        type=str,
-        metavar='EXT',
-        help='Extensions à ajouter aux payloads Ex: --extensions php,html,txt'
-    )
-
-    fuzzer_payload.add_argument(
-        '--prefix',
-        type=str,
-        metavar='PREFIX',
-        help='Préfixe à ajouter aux payloads Ex: --prefix test_'
-    )
-
-    fuzzer_payload.add_argument(
-        '--suffix',
-        type=str,
-        metavar='SUFFIX',
-        help='Suffixe à ajouter aux payloads Ex: --suffix _backup'
-    )
-
-    fuzzer_payload.add_argument(
-        '--xss-marker',
-        type=str,
-        metavar='XXS MARKER',
-        help='Permet de définir le marquer xss (Par défault : xss)'
-    )
-    # ═══════════════════════════════════════════════════════
-    # FUZZER - EXPORT
-    # ═══════════════════════════════════════════════════════
-
-    fuzzer_output = parser.add_argument_group('fuzzer - export des résultats')
-
-    fuzzer_output.add_argument(
-        '-o', '--output',
-        type=str,
-        metavar='FILE',
-        help='Fichier de sortie pour exporter les résultats Si non spécifié, pas d\'export'
-    )
-
-    fuzzer_output.add_argument(
-        '--auto-export',
-        action='store_true',
-        help='Exporter automatiquement dans results_YYYYMMDD_HHMMSS.txt'
-    )
-
-    # ═══════════════════════════════════════════════════════
-    # FUZZER - AUTRES
-    # ═══════════════════════════════════════════════════════
-
-    fuzzer_misc = parser.add_argument_group('fuzzer -  diverses')
-
-    fuzzer_misc.add_argument(
-        '--delay',
-        type=float,
-        metavar='SEC',
-        help='Délai entre chaque requête en secondes. Ex: --delay 0.1'
-    )
-
-    # ═══════════════════════════════════════════════════════
-    # PARSER LES ARGUMENTS
-    # ═══════════════════════════════════════════════════════
+    if len(sys.argv) == 1:
+        parser.print_help(sys.stderr)
+        sys.exit(1)
 
     args = parser.parse_args()
 
-    # ═══════════════════════════════════════════════════════
-    # ROUTER VERS L'OUTIL APPROPRIÉ
-    # ═══════════════════════════════════════════════════════
+    # Normalisation target/url
+    if hasattr(args, 'target') and args.target and not args.url:
+        args.url = args.target
+
+    if args.tool != 'nGOAT' and not args.url:
+         # Pour ftpGOAT/BruteGOAT/fuzzer une cible est requise
+         # Note: fuzzer vérifie aussi args.wordlist plus tard
+         print(f"{RED}[!] Cible requise (argument positionnel ou -u/--url){RESET}")
+         parser.print_usage() # Affiche l'usage du subparser actif
+         sys.exit(1)
 
     if args.tool == 'fuzzer':
         run_fuzzer(args)
+
+    elif args.tool == 'nGOAT':
+        run_gui()
+
+    elif args.tool == 'ftpGOAT':
+        run_ftp_scanner(args)
+
+    elif args.tool == 'BruteGOAT':
+        run_brutegoat(args)
 
 def run_fuzzer(args):
     """
@@ -523,6 +468,10 @@ def run_fuzzer(args):
 
     except Exception as e:
         print(f"{RED}[!] Erreur: {e}{RESET}")
+
+ # ═══════════════════════════════════════════════════════
+    # LANCER LE FUZZER
+    # ═══════════════════════════════════════════════════════
 
 
 if __name__ == "__main__":
