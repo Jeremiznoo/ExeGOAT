@@ -151,7 +151,7 @@ class FTPGOAT:
         # Mais ici on a déjà une valeur par défaut.
         # On va tenter de se connecter. Si ça fail avec 530, on redemande.
         
-        print(f"{BLUE}[*] Tentative de connexion au shell pour {user}...{RESET}")
+        print(f"{BLUE}[*] Tentative de connexion au shell en {user}...{RESET}")
         try:
             ftp = ftplib.FTP()
             ftp.connect(self.host, self.port, timeout=self.timeout)

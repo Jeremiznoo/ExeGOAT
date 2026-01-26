@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-nGOAT
+nGOAT - Network Scanner with SNMP Support
+
+Made by Jeremy D.
+https://github.com/jeremiznoo
 """
 
 import tkinter as tk
@@ -17,22 +20,40 @@ from queue import Queue
 import urllib.request
 import urllib.error
 import os
+import sys
+import shutil
+import logging
+from datetime import datetime
 from PIL import Image, ImageTk
-import asyncio
+
+# Windows-specific imports (optional)
+try:
+    import ctypes
+    WINDOWS_ADMIN_CHECK = True
+except ImportError:
+    WINDOWS_ADMIN_CHECK = False
 
 # ==========================================
 # SNMP - Solution universelle (Windows/Linux)
 # ==========================================
-# Essaie d'abord snmpwalk (Linux), puis pysnmp (Windows/Linux)
+# Essaie d'abord snmpwalk (Linux), puis pysnmp synchrone (Windows/Linux)
 PYSNMP_AVAILABLE = False
 try:
-    from pysnmp.hlapi.v1arch.asyncio import (
-        next_cmd, Slim, CommunityData, UdpTransportTarget,
-        ObjectType, ObjectIdentity, UsmUserData
+    from pysnmp.hlapi import (
+        nextCmd, SnmpEngine, CommunityData, UdpTransportTarget,
+        ContextData, ObjectType, ObjectIdentity, UsmUserData
     )
     PYSNMP_AVAILABLE = True
 except ImportError:
-    PYSNMP_AVAILABLE = False
+    try:
+        # Fallback: essayer l'ancienne API v1arch (mais en synchrone)
+        from pysnmp.hlapi.v1arch import (
+            nextCmd, CommunityData, UdpTransportTarget,
+            ObjectType, ObjectIdentity, UsmUserData
+        )
+        PYSNMP_AVAILABLE = True
+    except ImportError:
+        PYSNMP_AVAILABLE = False
 
 # ==========================================
 # MODULES RÉSEAU
@@ -297,8 +318,41 @@ class NetworkScannerGUI:
         self.snmp_priv_pass = tk.StringVar(value="")
         self.dns_ip_var = tk.StringVar(value="1.1.1.1")
 
+        # ==========================================
+        # INFRASTRUCTURE & CONFIGURATION
+        # ==========================================
+        
+        # Détection OS
+        self.is_windows = platform.system() == 'Windows'
+        self.is_linux = platform.system() == 'Linux'
+        self.is_macos = platform.system() == 'Darwin'
+        
+        # Répertoires de configuration
+        self.config_dir = self._get_config_dir()
+        self.scans_dir = os.path.join(self.config_dir, 'scans')
+        os.makedirs(self.config_dir, exist_ok=True)
+        os.makedirs(self.scans_dir, exist_ok=True)
+        
+        # Logging
+        self.setup_logging()
+        self.logger.info(f"nGOAT démarré sur {platform.system()}")
+        
+        # Thème
+        self.theme = "dark"  # dark ou light
+        
+        # Variable pour tracking du tri
+        self.sort_reverse = {}  # {column: bool} pour alternance asc/desc
+        
+        # Configuration
         self.setup_style()
         self.setup_layout()
+        
+        # Auto-charger la configuration sauvegardée
+        self.root.after(100, self.load_config)
+        
+        # Vérifier les permissions admin sur Windows
+        if self.is_windows:
+            self.root.after(200, self.check_admin_windows)
 
     def setup_style(self):
         """
@@ -399,6 +453,8 @@ class NetworkScannerGUI:
         self.btn_stop.pack(fill=tk.X, padx=20, pady=5)
 
         ttk.Separator(sidebar, orient='horizontal').pack(fill=tk.X, padx=20, pady=20)
+        
+        # Boutons d'export
         ttk.Button(sidebar, text="Exporte CSV", command=self.export_csv).pack(fill=tk.X, padx=20, pady=5)
         ttk.Button(sidebar, text="Effacer", command=self.clear_results).pack(fill=tk.X, padx=20, pady=5)
 
@@ -432,7 +488,7 @@ class NetworkScannerGUI:
         col2.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
         ttk.Label(col2, text="Options Actives", style="Normal.TLabel").pack(anchor="w", pady=(0, 5))
         ttk.Checkbutton(col2, text="Résolution NetBIOS", variable=self.opt_netbios).pack(anchor="w")
-        ttk.Checkbutton(col2, text="Résolution DNS Inverse", variable=self.opt_dns).pack(anchor="w")
+        ttk.Checkbutton(col2, text="Résolution DNS", variable=self.opt_dns).pack(anchor="w")
         ttk.Checkbutton(col2, text="MAC Vendor Lookup", variable=self.opt_mac_vendor).pack(anchor="w")
         ttk.Checkbutton(col2, text="Activer Scan SNMP", variable=self.opt_snmp, command=self.toggle_snmp_options).pack(anchor="w")
 
@@ -466,6 +522,20 @@ class NetworkScannerGUI:
         sb.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.tree.tag_configure('online', foreground=self.colors['success'])
+        
+        # --- Bindings UX ---
+        # 1. Tri des colonnes au clic sur l'en-tête
+        for col in cols:
+            self.tree.heading(col, text=col, command=lambda c=col: self.sort_column(c))
+        
+        # 2. Suppression par touche Delete
+        self.tree.bind('<Delete>', self.delete_selected_items)
+        
+        # 3. Auto-resize au double-clic sur les en-têtes
+        for col in cols:
+            self.tree.heading(col, text=col, command=lambda c=col: self.sort_column(c))
+            # Note: Double-clic géré via <Double-1> sur la région de l'en-tête
+        self.tree.bind('<Double-1>', self.auto_resize_column)
 
     def toggle_snmp_options(self):
         """Active/Désactive l'UI SNMP"""
@@ -501,21 +571,491 @@ class NetworkScannerGUI:
 
     def create_field(self, parent, label, var):
         """
-        Crée un champ de saisie labellisé propre
+        Crée un champ de saisie labellisé propre avec validation IP
         """
         f = ttk.Frame(parent, style="Card.TFrame")
         f.pack(fill=tk.X, pady=2)
         ttk.Label(f, text=label, style="Normal.TLabel").pack(anchor="w")
-        ttk.Entry(f, textvariable=var).pack(fill=tk.X)
+        
+        entry = ttk.Entry(f, textvariable=var)
+        
+        # Appliquer validation si le champ concerne une IP
+        if any(keyword in label.lower() for keyword in ['ip', 'dns', 'routeur', 'plage']):
+            # Enregistrer la validation
+            vcmd = (self.root.register(self.validate_ip_entry), '%P')
+            entry.config(validate='key', validatecommand=vcmd)
+        
+        entry.pack(fill=tk.X)
+
+# ==========================================
+# FONCTIONNALITÉS UX / Quality of Life
+# ==========================================
+
+    def validate_ip_entry(self, new_value):
+        """
+        Valide les entrées pour les champs IP (Plage IP, DNS, Routeur)
+        N'autorise que : chiffres (0-9), points (.), slash (/), espace
+        
+        Args:
+            new_value (str): Nouvelle valeur proposée
+        
+        Returns:
+            bool: True si valide, False sinon
+        """
+        # Autoriser vide (pour pouvoir effacer)
+        if new_value == "":
+            return True
+        
+        # Regex: seulement chiffres, points, slash, espaces
+        # Pattern: ^[0-9./\s]*$
+        import re
+        pattern = r'^[0-9./\s]*$'
+        return bool(re.match(pattern, new_value))
+    
+    def sort_column(self, col):
+        """
+        Trie le Treeview par colonne avec logique intelligente
+        - Colonne 'IP' : tri numérique via ipaddress.IPv4Address
+        - Autres colonnes : tri alphabétique
+        Alterne entre ascendant/descendant à chaque clic
+        
+        Args:
+            col (str): Nom de la colonne à trier
+        """
+        # Toggle reverse pour cette colonne
+        self.sort_reverse[col] = not self.sort_reverse.get(col, False)
+        reverse = self.sort_reverse[col]
+        
+        # Récupérer tous les items
+        items = [(self.tree.set(item, col), item) for item in self.tree.get_children('')]
+        
+        # Fonction de tri différente selon la colonne
+        if col == 'IP':
+            # Tri numérique pour les IPs
+            def sort_key(item):
+                try:
+                    return ipaddress.IPv4Address(item[0])
+                except:
+                    # Si ce n'est pas une IP valide, mettre à la fin
+                    return ipaddress.IPv4Address('255.255.255.255')
+            items.sort(key=sort_key, reverse=reverse)
+        else:
+            # Tri alphabétique pour les autres colonnes
+            items.sort(key=lambda item: item[0].lower(), reverse=reverse)
+        
+        # Réorganiser les items dans le Treeview
+        for index, (val, item) in enumerate(items):
+            self.tree.move(item, '', index)
+        
+        # Mettre à jour l'en-tête pour indiquer le sens du tri
+        heading_text = col
+        if reverse:
+            heading_text = f"{col} ▼"
+        else:
+            heading_text = f"{col} ▲"
+        
+        self.tree.heading(col, text=heading_text)
+        
+        # Réinitialiser les autres en-têtes
+        for c in ('Statut', 'IP', 'OS', 'Hostname', 'MAC', 'Vendor', 'Ports'):
+            if c != col:
+                self.tree.heading(c, text=c)
+    
+    def delete_selected_items(self, event=None):
+        """
+        Supprime les lignes sélectionnées du Treeview
+        Lié à la touche <Delete>
+        
+        Args:
+            event: Événement Tkinter (optionnel)
+        """
+        selected_items = self.tree.selection()
+        
+        if not selected_items:
+            return
+        
+        # Demander confirmation si plusieurs lignes
+        if len(selected_items) > 1:
+            confirm = messagebox.askyesno(
+                "Confirmation",
+                f"Supprimer {len(selected_items)} lignes sélectionnées ?"
+            )
+            if not confirm:
+                return
+        
+        # Supprimer les items
+        for item in selected_items:
+            self.tree.delete(item)
+    
+    def auto_resize_column(self, event):
+        """
+        Ajuste automatiquement la largeur de la colonne au double-clic
+        Adapte la largeur au contenu le plus large (header inclus)
+        
+        Args:
+            event: Événement Tkinter
+        """
+        # Identifier la région cliquée
+        region = self.tree.identify_region(event.x, event.y)
+        
+        # Vérifier si c'est un double-clic sur l'en-tête
+        if region != 'heading':
+            return
+        
+        # Identifier la colonne
+        col = self.tree.identify_column(event.x)
+        if not col:
+            return
+        
+        # Convertir #1, #2, etc. en nom de colonne
+        col_index = int(col.replace('#', '')) - 1
+        cols = ('Statut', 'IP', 'OS', 'Hostname', 'MAC', 'Vendor', 'Ports')
+        col_name = cols[col_index]
+        
+        # Calculer la largeur nécessaire
+        # 1. Largeur du header
+        header_width = len(col_name) * 10  # Approximation
+        
+        # 2. Largeur du contenu le plus large
+        max_width = header_width
+        for item in self.tree.get_children(''):
+            value = str(self.tree.set(item, col_name))
+            width = len(value) * 8  # Approximation (8 pixels par caractère)
+            max_width = max(max_width, width)
+        
+        # Ajouter une marge
+        max_width += 20
+        
+        # Limiter la largeur max (pour éviter des colonnes trop larges)
+        max_width = min(max_width, 400)
+        
+        # Appliquer la nouvelle largeur
+        self.tree.column(col_name, width=max_width)
+
+# ==========================================
+# INFRASTRUCTURE & CONFIGURATION
+# ==========================================
+
+    def _get_config_dir(self):
+        """
+        Retourne le répertoire de configuration selon l'OS
+        Windows: %APPDATA%/nGOAT
+        Linux/Mac: ~/.config/ngoat
+        """
+        if self.is_windows:
+            base_dir = os.getenv('APPDATA', os.path.expanduser('~'))
+            return os.path.join(base_dir, 'nGOAT')
+        else:
+            return os.path.expanduser('~/.config/ngoat')
+    
+    def setup_logging(self):
+        """Configure le système de logging avec sortie fichier"""
+        log_file = os.path.join(self.config_dir, 'ngoat.log')
+        
+        # Configuration logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(log_file, encoding='utf-8'),
+                logging.StreamHandler()
+            ]
+        )
+        
+        self.logger = logging.getLogger('nGOAT')
+    
+    @staticmethod
+    def resource_path(relative_path):
+        """
+        Obtient le chemin absolu des ressources (compatible .exe PyInstaller)
+        
+        Args:
+            relative_path (str): Chemin relatif de la ressource
+        
+        Returns:
+            str: Chemin absolu
+        """
+        try:
+            # PyInstaller crée un dossier temp _MEIPASS
+            base_path = sys._MEIPASS
+        except Exception:
+            base_path = os.path.abspath(".")
+        
+        return os.path.join(base_path, relative_path)
+    
+    def load_config(self):
+        """Charge la configuration depuis le fichier JSON"""
+        config_file = os.path.join(self.config_dir, 'ngoat_config.json')
+        
+        if not os.path.exists(config_file):
+            self.logger.info("Aucune configuration trouvée, utilisation des valeurs par défaut")
+            return
+        
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # Charger les valeurs réseau
+            if 'network' in config:
+                self.ip_range_var.set(config['network'].get('ip_range', ''))
+                self.dns_ip_var.set(config['network'].get('dns_server', '1.1.1.1'))
+            
+            # Charger SNMP
+            if 'snmp' in config:
+                self.opt_snmp.set(config['snmp'].get('enabled', False))
+                self.snmp_version.set(config['snmp'].get('version', 'v2c'))
+                self.snmp_target_var.set(config['snmp'].get('target', ''))
+                self.snmp_community_var.set(config['snmp'].get('community', 'public'))
+                self.snmp_user.set(config['snmp'].get('user', ''))
+            
+            # Charger options
+            if 'options' in config:
+                self.opt_netbios.set(config['options'].get('netbios', True))
+                self.opt_dns.set(config['options'].get('dns', True))
+                self.opt_mac_vendor.set(config['options'].get('mac_vendor', True))
+            
+            # Charger UI
+            if 'ui' in config:
+                self.theme = config['ui'].get('theme', 'dark')
+            
+            self.logger.info("Configuration chargée avec succès")
+            
+        except Exception as e:
+            self.logger.error(f"Erreur chargement config: {e}")
+    
+    def check_admin_windows(self):
+        """Vérifie si le script tourne avec privilèges admin sur Windows"""
+        if not WINDOWS_ADMIN_CHECK or not self.is_windows:
+            return
+        
+        try:
+            is_admin = ctypes.windll.shell32.IsUserAnAdmin()
+            if not is_admin:
+                messagebox.showwarning(
+                    "Privilèges Administrateur",
+                    "⚠️ nGOAT n'est pas exécuté en tant qu'administrateur.\n\n"
+                    "Certaines fonctionnalités (scan réseau, SNMP) peuvent\n"
+                    "nécessiter des privilèges élevés.\n\n"
+                    "Pour un scan complet:\n"
+                    "→ Clic droit sur nGOAT.exe\n"
+                    "→ 'Exécuter en tant qu'administrateur'"
+                )
+                self.logger.warning("Exécution sans privilèges administrateur")
+        except Exception as e:
+            self.logger.error(f"Erreur vérification admin: {e}")
+    
+    def get_ping_params(self):
+        """Retourne les paramètres de ping adaptés à l'OS"""
+        if self.is_windows:
+            return ['-n', '1', '-w', '500']  # count, timeout ms
+        else:
+            return ['-c', '1', '-W', '0.5']  # count, timeout sec
+    
+    def get_arp_command(self):
+        """Retourne la commande ARP adaptée à l'OS"""
+        if self.is_windows:
+            return ['arp', '-a']
+        else:
+            return ['arp', '-n']
+    
+    def export_excel(self):
+        """Export les résultats en Excel (si openpyxl disponible)"""
+        try:
+            import openpyxl
+        except ImportError:
+            messagebox.showwarning(
+                "Excel Export",
+                "Le module 'openpyxl' n'est pas installé.\n\n"
+                "Installation:\npip install openpyxl"
+            )
+            return
+        
+        if not self.tree.get_children():
+            messagebox.showwarning("Export", "Aucune donnée à exporter")
+            return
+        
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx"), ("Tous", "*.*")]
+        )
+        
+        if not filename:
+            return
+        
+        try:
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Scan Results"
+            
+            # Headers
+            headers = ['Statut', 'IP', 'OS', 'Hostname', 'MAC', 'Vendor', 'Ports']
+            ws.append(headers)
+            
+            # Data
+            for item in self.tree.get_children():
+                values = self.tree.item(item)['values']
+                ws.append(values)
+            
+            # Style
+            for cell in ws[1]:
+                cell.font = openpyxl.styles.Font(bold=True)
+            
+            wb.save(filename)
+            self.logger.info(f"Export Excel réussi: {filename}")
+            messagebox.showinfo("Export", f"Export réussi:\n{filename}")
+            
+        except Exception as e:
+            self.logger.error(f"Erreur export Excel: {e}")
+            messagebox.showerror("Erreur", f"Erreur lors de l'export:\n{e}")
+    
+    def save_scan_history(self):
+        """Sauvegarde l'historique du scan actuel"""
+        if not self.tree.get_children():
+            return
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = os.path.join(self.scans_dir, f"scan_{timestamp}.json")
+        
+        try:
+            results = {
+                'scan_date': datetime.now().isoformat(),
+                'scan_range': self.ip_range_var.get(),
+                'total_hosts': len(self.tree.get_children()),
+                'hosts': []
+            }
+            
+            for item in self.tree.get_children():
+                values = self.tree.item(item)['values']
+                results['hosts'].append({
+                    'status': values[0],
+                    'ip': values[1],
+                    'os': values[2],
+                    'hostname': values[3],
+                    'mac': values[4],
+                    'vendor': values[5],
+                    'ports': values[6]
+                })
+            
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(results, f, indent=2, ensure_ascii=False)
+            
+            self.logger.info(f"Historique sauvegardé: {filename}")
+            
+        except Exception as e:
+            self.logger.error(f"Erreur sauvegarde historique: {e}")
 
 # ==========================================
 # LOGIQUE DE SCAN ET SNMP
 # ==========================================
 
+    @staticmethod
+    def clean_mac_address(raw_value):
+        """
+        Fonction universelle de nettoyage d'adresse MAC par Regex.
+        Extrait exactement 12 caractères hexadécimaux, peu importe le format.
+        
+        Args:
+            raw_value (str): Valeur brute (peut contenir 'Hex-STRING:', espaces, etc.)
+        
+        Returns:
+            str: Adresse MAC formatée 'XX:XX:XX:XX:XX:XX' ou None si invalide
+        """
+        if not raw_value:
+            return None
+        
+        value_str = str(raw_value)
+        
+        # Étape 1: Supprimer les préfixes de type SNMP connus
+        # (important car "Hex-STRING" contient des caractères hexa valides!)
+        type_prefixes = [
+            'Hex-STRING:',
+            'STRING:',
+            'OCTET STRING:',
+            'OctetString:',
+            'HexString:',
+        ]
+        
+        for prefix in type_prefixes:
+            if prefix in value_str:
+                # Prendre seulement ce qui suit le préfixe
+                value_str = value_str.split(prefix, 1)[1]
+                break
+        
+        # Étape 2: Extraire tous les caractères hexadécimaux (0-9, A-F, a-f)
+        hex_chars = re.findall(r'[0-9A-Fa-f]', value_str)
+        mac_clean = ''.join(hex_chars).upper()
+        
+        # Valider la longueur (exactement 12 caractères pour une MAC)
+        if len(mac_clean) != 12:
+            return None
+        
+        # Formater avec séparateurs ':'
+        return ':'.join([mac_clean[i:i+2] for i in range(0, 12, 2)])
+
+    @staticmethod
+    def extract_ip_from_oid(oid_string, base_oid='1.3.6.1.2.1.4.22.1.2'):
+        """
+        Extrait l'adresse IP depuis un OID SNMP de manière infaillible.
+        Gère la structure : [Base OID].[ifIndex].[IP_A.B.C.D]
+        
+        Args:
+            oid_string (str): OID complet (peut commencer par 'iso' ou '1')
+            base_oid (str): OID de base ipNetToMediaPhysAddress
+        
+        Returns:
+            str: Adresse IP valide ou None
+        """
+        if not oid_string:
+            return None
+        
+        # Étape 1: Normalisation - Remplacer 'iso' par '1'
+        oid_normalized = oid_string.strip()
+        if oid_normalized.startswith('iso.'):
+            oid_normalized = '1.' + oid_normalized[4:]  # Remplace 'iso.' par '1.'
+        elif oid_normalized.startswith('iso'):
+            oid_normalized = '1' + oid_normalized[3:]  # Remplace 'iso' par '1'
+        
+        # Enlever le point initial si présent
+        oid_normalized = oid_normalized.lstrip('.')
+        
+        # Étape 2: Vérifier que l'OID commence par le base_oid
+        if not oid_normalized.startswith(base_oid):
+            return None
+        
+        # Étape 3: Extraire le suffixe après le base_oid
+        # Format: [base_oid].[ifIndex].[IP]
+        suffix = oid_normalized[len(base_oid):].lstrip('.')
+        parts = suffix.split('.')
+        
+        # Étape 4: Parser par soustraction
+        # Le premier élément est l'ifIndex (longueur variable, à ignorer)
+        # Les 4 éléments suivants forment l'IP
+        if len(parts) < 5:  # Besoin d'au moins ifIndex + 4 octets IP
+            # Cas particulier : pas d'ifIndex, directement l'IP
+            if len(parts) == 4:
+                try:
+                    ip_candidate = '.'.join(parts)
+                    ip_obj = ipaddress.ip_address(ip_candidate)
+                    return str(ip_obj)
+                except:
+                    return None
+            return None
+        
+        # Ignorer le premier élément (ifIndex) et prendre les 4 suivants
+        ip_parts = parts[1:5]  # Skip ifIndex, take next 4
+        
+        try:
+            ip_candidate = '.'.join(ip_parts)
+            ip_obj = ipaddress.ip_address(ip_candidate)
+            return str(ip_obj)
+        except (ValueError, ipaddress.AddressValueError):
+            return None
+
     def get_snmp_arp_table(self):
         """
         Récupère la table ARP (ipNetToMediaPhysAddress) via SNMP
         Met à jour le cache interne self.snmp_mac_cache
+        Thread-safe, ne lève pas d'exception fatale
         """
         if not self.opt_snmp.get():
             return
@@ -527,10 +1067,12 @@ class NetworkScannerGUI:
         creds = {}
         if version == "v2c":
             creds['community'] = self.snmp_community_var.get()
-            if not creds['community']: return
+            if not creds['community']: 
+                return
         else: # v3
             creds['user'] = self.snmp_user.get()
-            if not creds['user']: return
+            if not creds['user']: 
+                return
             creds['auth_proto'] = self.snmp_auth_proto.get()
             creds['auth_pass'] = self.snmp_auth_pass.get()
             creds['priv_proto'] = self.snmp_priv_proto.get()
@@ -538,12 +1080,20 @@ class NetworkScannerGUI:
 
         self.log(f"Lecture Table ARP SNMP ({version}) : {target}...")
 
-        # Méthode 1: snmpwalk
-        mac_results = self._get_snmp_via_snmpwalk(target, version, creds)
+        mac_results = None
+        
+        try:
+            # Méthode 1: snmpwalk (préféré)
+            mac_results = self._get_snmp_via_snmpwalk(target, version, creds)
+        except Exception as e:
+            self.log(f"SNMP snmpwalk échec: {type(e).__name__}")
 
-        # Méthode 2: pysnmp
+        # Méthode 2: pysnmp (fallback)
         if not mac_results and PYSNMP_AVAILABLE:
-            mac_results = self._get_snmp_via_pysnmp(target, version, creds)
+            try:
+                mac_results = self._get_snmp_via_pysnmp(target, version, creds)
+            except Exception as e:
+                self.log(f"SNMP pysnmp échec: {type(e).__name__}")
 
         if mac_results:
             normalized_cache = {}
@@ -559,16 +1109,28 @@ class NetworkScannerGUI:
 
             self.log(f"SNMP : {len(normalized_cache)} MACs récupérées")
         else:
-            self.log("Erreur SNMP: Impossible de récupérer la table ARP")
+            self.log("SNMP: Aucune donnée récupérée")
 
     def _get_snmp_via_snmpwalk(self, target, version, creds):
-        """Récupère la table ARP via snmpwalk (v2c/v3)"""
+        """
+        Récupère la table ARP via snmpwalk (v2c/v3)
+        Gestion robuste : préfixe 'iso', ifIndex variable, parsing Hex-STRING
+        
+        Returns:
+            dict: {ip: mac} ou None si échec
+        """
+        import shutil
+        
+        # Vérifier que snmpwalk est disponible
+        if not shutil.which('snmpwalk'):
+            return None
+        
         try:
             oid_mac = '1.3.6.1.2.1.4.22.1.2'
-            cmd = ['snmpwalk', '-O', 'n'] # Output numérique pour parsing facile
+            cmd = ['snmpwalk', '-O', 'n', '-t', '5']  # Output numérique, timeout 5s
 
             if version == "v2c":
-                cmd.extend(['-v', '2c', '-c', creds.get('community')])
+                cmd.extend(['-v', '2c', '-c', creds.get('community', 'public')])
             else:
                 cmd.extend(['-v', '3', '-u', creds.get('user'), '-l', 'authPriv'])
                 # Auth
@@ -580,172 +1142,324 @@ class NetworkScannerGUI:
 
             cmd.extend([target, oid_mac])
 
-            # Note: subprocess peut échouer si snmpwalk n'est pas installé ou arguments invalides
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            # Exécution avec gestion d'erreurs
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                timeout=15,
+                errors='ignore'  # Ignorer les erreurs d'encodage
+            )
 
             if result.returncode != 0:
                 return None
 
             mac_results = {}
+            line_count = 0
+            success_count = 0
+            
+            print("\n" + "="*80)
+            print("DEBUG SNMP PARSING - Détail du traitement snmpwalk")
+            print("="*80)
+            
             # Parsing robuste de la sortie snmpwalk
-            # Format attendu (avec -On): .1.3.6.1.2.1.4.22.1.2.X.X.X.X = Hex-STRING: ...
             for line in result.stdout.strip().split('\n'):
+                if not line or ' = ' not in line:
+                    continue
+                
+                line_count += 1
+                
                 # Split OID = Value
-                parts = line.split(' = ')
-                if len(parts) < 2: continue
-
-                oid_part = parts[0].strip()
-                val_part = parts[1].strip().upper()
-
-                # Extract IP from OID suffix (last 4 numbers)
-                oid_nums = oid_part.split('.')
-                # Need at least base OID + 4 IP parts. Base OID in numbers usually starts with .1...
-                if len(oid_nums) >= 4:
-                    ip_parts = oid_nums[-4:]
-                    try:
-                        # Verify valid IP logic
-                        ip = ".".join(ip_parts)
-                        ipaddress.ip_address(ip) # Check validity
-                        
-                        # Clean MAC Value
-                        # Identify and remove type prefix if present (e.g. "HEX-STRING: ", "STRING: ")
-                        # Heuristic: split by first colon if it looks like a type label
-                        # Common labels: Hex-STRING, STRING, INTEGER, etc.
-                        # But also MAC address itself might contain colons.
-                        
-                        # Strategy: Just keep hex characters from the value part
-                        # If it contains "HEX-STRING:" we remove it implicitly by keeping hex chars? 
-                        # No, "HEX-STRING" contains 'E' and 'C' which are hex.
-                        
-                        # Better: Split by ': ' if a space follows the colon, or just remove known prefixes.
-                        # Standard snmpwalk output format usually has "Type: Value"
-                        
-                        val_content = val_part
-                        if ": " in val_part:
-                             # Likely "Type: Value"
-                             # But check if it's just a MAC like "00:11:..." (no space usually, unless "00: 11: ...")
-                             # HEX-STRING: 00 00 ...
-                             # STRING: 00:00...
-                             # If the part BEFORE the first ": " is a known type or just text, we skip it.
-                             
-                             split_val = val_part.split(": ", 1)
-                             # If split_val[0] is like "HEX-STRING", "STRING", "OCTETSTRING", etc.
-                             # If split_val[0] looks like a MAC byte (e.g. "00"), don't split.
-                             
-                             prefix = split_val[0]
-                             if len(prefix) > 2 or "STRING" in prefix: 
-                                 val_content = split_val[1]
-                        
-                        # Clean all non-hex chars
-                        mac_clean = "".join(c for c in val_content if c in '0123456789ABCDEF')
-                        
-                        # MAC should be 12 hex chars
-                        if len(mac_clean) == 12:
-                            mac_fmt = ":".join([mac_clean[i:i+2] for i in range(0, 12, 2)])
-                            mac_results[ip] = mac_fmt
-                    except: continue
+                oid_part, _, val_part = line.partition(' = ')
+                oid_part = oid_part.strip()
+                val_part = val_part.strip()
+                
+                # Extraction IP depuis l'OID (gestion iso + ifIndex)
+                ip = self.extract_ip_from_oid(oid_part, oid_mac)
+                
+                # Nettoyage MAC universel (Hex-STRING avec espaces)
+                mac = self.clean_mac_address(val_part)
+                
+                # Debug output détaillé
+                if ip and mac:
+                    success_count += 1
+                    mac_results[ip] = mac
+                    if success_count <= 5 or success_count % 20 == 0:  # Afficher les 5 premiers puis tous les 20
+                        print(f"  [{success_count:3d}] OID: {oid_part[:60]}<20chars>")
+                        print(f"        ↪ IP: {ip:15s} | MAC: {mac}")
+                else:
+                    # Afficher les échecs pour debug
+                    if line_count <= 3:  # Afficher seulement les 3 premiers échecs
+                        print(f"  [✗] SKIP - OID: {oid_part[:60]}")
+                        print(f"        Raison: IP={ip or 'FAIL'}, MAC={mac or 'FAIL'}")
+            
+            print("="*80)
+            print(f"RÉSULTAT: {success_count}/{line_count} entrées extraites avec succès")
+            print("="*80 + "\n")
 
             return mac_results if mac_results else None
 
-
-
-
-        except Exception:
+        except subprocess.TimeoutExpired:
+            print("⚠ SNMP Timeout: snmpwalk a dépassé le délai")
+            return None
+        except FileNotFoundError:
+            print("⚠ SNMP Error: snmpwalk n'est pas installé")
+            return None
+        except Exception as e:
+            print(f"⚠ SNMP Error: {type(e).__name__}: {e}")
             return None
 
     def _get_snmp_via_pysnmp(self, target, version, creds):
-        """Récupère la table ARP via pysnmp (v2c/v3)"""
+        """
+        Récupère la table ARP via pysnmp synchrone (v2c principalement)
+        Utilise un thread dédié pour isoler les opérations SNMP du main loop Tkinter
+        
+        Returns:
+            dict: {ip: mac} ou None si échec
+        """
+        import concurrent.futures
+        
+        # Exécuter dans un thread séparé pour isolation complète
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self._sync_get_snmp_pysnmp, target, version, creds)
+            try:
+                return future.result(timeout=20)
+            except concurrent.futures.TimeoutError:
+                return None
+            except Exception:
+                return None
+    
+    def _sync_get_snmp_pysnmp(self, target, version, creds):
+        """
+        Implémentation synchrone de pysnmp (pas d'asyncio)
+        Exécutée dans un thread dédié pour compatibilité Tkinter
+        
+        Returns:
+            dict: {ip: mac} ou None
+        """
+        mac_results = {}
+        oid_mac = '1.3.6.1.2.1.4.22.1.2'
+        
         try:
             # Prepare Auth Data
-            auth_data = None
             if version == "v2c":
-                auth_data = CommunityData(creds.get('community'), mpModel=1)
+                auth_data = CommunityData(creds.get('community', 'public'), mpModel=1)
             else:
-                # v3 mapping
-                auth_proto_map = {'MD5': 'usmHMACMD5AuthProtocol', 'SHA': 'usmHMACSHAAuthProtocol'}
-                priv_proto_map = {'DES': 'usmDESPrivProtocol', 'AES': 'usmAesCfb128Protocol'}
-
-                # Import dynamique des constantes si besoin, mais ici on passe les strings si pysnmp supporte
-                # ou on suppose l'import direct. Pour simplicité, on laisse pysnmp gérer si possible ou on maps.
-                # NOTE: Pour pysnmp v1arch, UsmUserData prend les OIDs protocol. 
-                # Simplification: on tente l'approche standard si l'import a réussi.
-
-                # Besoin de mappings réels si on veut supporter auth/priv
-                # Pour cet exercice, on assume que l'utilisateur a pysnmp installé avec les bons symboles
-                # ou on fait un effort minimal pour v3 qui est complexe en pysnmp pur.
-
-                # On va construire UsmUserData avec les arguments
-                # Attention: il faut mapper les strings 'SHA', 'AES' aux OIDs pysnmp.
-                # Faute d'imports complets de tous les OIDs, on va faire un best-effort.
-
-                # Si pysnmp est présent, on a accès aux constantes via pysnmp.hlapi... 
-                # Mais on a importé que v1arch.asyncio...
-
-                # Pour éviter des erreurs d'import complexes, on va laisser le fallback snmpwalk gérer v3
-                # Si pysnmp est requis pour v3, il faudra ajouter plus d'imports.
-                # Pour l'instant, on supporte v2c pleinement en pysnmp.
-                if version == "v3":
-                    return None # Fallback to snmpwalk ideally, or incomplete implement
-
+                # v3 support limité (complexe avec pysnmp)
+                # Laisser snmpwalk gérer v3 de préférence
+                return None
+            
+            # Créer les objets SNMP
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, self._async_get_snmp_pysnmp(target, auth_data))
-                        return future.result(timeout=15)
-            except RuntimeError: pass
-
-            return asyncio.run(self._async_get_snmp_pysnmp(target, auth_data))
+                # API moderne pysnmp
+                engine = SnmpEngine()
+                transport = UdpTransportTarget((target, 161), timeout=5, retries=1)
+                context = ContextData()
+                
+                # Itération sur la table ARP
+                for (errorIndication, errorStatus, errorIndex, varBinds) in nextCmd(
+                    engine, auth_data, transport, context,
+                    ObjectType(ObjectIdentity(oid_mac)),
+                    lexicographicMode=False,
+                    maxRows=100
+                ):
+                    if errorIndication or errorStatus:
+                        break
+                    
+                    if not varBinds:
+                        break
+                    
+                    for varBind in varBinds:
+                        oid_full = str(varBind[0])
+                        val = varBind[1]
+                        
+                        # Vérifier que l'OID appartient bien à la table ARP
+                        if not oid_full.startswith(oid_mac):
+                            return mac_results
+                        
+                        # Extraction IP robuste
+                        ip = self.extract_ip_from_oid(oid_full, oid_mac)
+                        if not ip:
+                            continue
+                        
+                        # Décodage MAC depuis les octets SNMP
+                        try:
+                            if hasattr(val, 'asOctets'):
+                                mac_raw = val.asOctets()
+                            elif hasattr(val, 'prettyPrint'):
+                                # Fallback: utiliser la représentation texte
+                                mac = self.clean_mac_address(val.prettyPrint())
+                                if mac:
+                                    mac_results[ip] = mac
+                                continue
+                            else:
+                                continue
+                            
+                            # Formater les 6 octets en MAC
+                            if len(mac_raw) == 6:
+                                mac_fmt = ':'.join([f'{b:02X}' for b in mac_raw])
+                                mac_results[ip] = mac_fmt
+                        except Exception:
+                            continue
+                
+            except NameError:
+                # API v1arch (ancienne)
+                transport = UdpTransportTarget((target, 161), timeout=5, retries=1)
+                
+                for (errorIndication, errorStatus, errorIndex, varBinds) in nextCmd(
+                    auth_data, transport,
+                    ObjectType(ObjectIdentity(oid_mac)),
+                    lexicographicMode=False
+                ):
+                    if errorIndication or errorStatus or not varBinds:
+                        break
+                    
+                    for varBind in varBinds:
+                        oid_full = str(varBind[0])
+                        val = varBind[1]
+                        
+                        if not oid_full.startswith(oid_mac):
+                            return mac_results
+                        
+                        ip = self.extract_ip_from_oid(oid_full, oid_mac)
+                        if not ip:
+                            continue
+                        
+                        if hasattr(val, 'asOctets'):
+                            mac_raw = val.asOctets()
+                            if len(mac_raw) == 6:
+                                mac_fmt = ':'.join([f'{b:02X}' for b in mac_raw])
+                                mac_results[ip] = mac_fmt
+            
+            return mac_results if mac_results else None
+            
         except Exception:
             return None
 
-    async def _async_get_snmp_pysnmp(self, target, auth_data):
-        mac_results = {}
-        oid_mac = '1.3.6.1.2.1.4.22.1.2'
-
+    def get_mac_from_cache(self, ip_str):
+        """
+        Fonction centralisée pour récupérer une MAC depuis le cache SNMP
+        Utilise une comparaison 'Force Brute' avec des objets IPv4Address
+        pour gérer les variations de format (10.20.12.1 == 10.20.12.01)
+        
+        Args:
+            ip_str (str): Adresse IP à rechercher
+        
+        Returns:
+            str: Adresse MAC ou None si non trouvée
+        """
+        if not self.snmp_mac_cache:
+            return None
+        
+        with self.snmp_cache_lock:
+            # Étape 1: Normalisation de l'IP cible
+            try:
+                target_ip_obj = ipaddress.IPv4Address(ip_str)
+            except (ValueError, ipaddress.AddressValueError):
+                # Si l'IP n'est pas valide, essayer quand même une recherche string
+                mac = self.snmp_mac_cache.get(ip_str)
+                if mac:
+                    return mac
+                return None
+            
+            # Étape 2: Recherche directe avec IP normalisée
+            ip_normalized = str(target_ip_obj)
+            mac = self.snmp_mac_cache.get(ip_normalized)
+            if mac:
+                return mac
+            
+            # Étape 3: Force Brute - Comparer mathématiquement toutes les clés
+            # Ceci gère les cas où les clés seraient stockées avec des formats différents
+            # ou contiendraient des résidus d'OID
+            for cached_key, cached_mac in self.snmp_mac_cache.items():
+                try:
+                    # Essayer d'extraire une IP valide depuis la clé
+                    # (au cas où elle contiendrait des résidus comme '12.10.20.12.1')
+                    
+                    # D'abord, essayer la clé telle quelle
+                    try:
+                        cached_ip_obj = ipaddress.IPv4Address(cached_key)
+                        # Comparaison mathématique des objets IPv4Address
+                        if cached_ip_obj == target_ip_obj:
+                            return cached_mac
+                    except (ValueError, ipaddress.AddressValueError):
+                        # Si la clé n'est pas une IP valide, essayer d'extraire
+                        # les derniers 4 octets (au cas où résidu d'OID)
+                        parts = cached_key.split('.')
+                        if len(parts) >= 4:
+                            # Tester toutes les sous-séquences de 4 nombres
+                            for i in range(len(parts) - 3):
+                                try:
+                                    ip_candidate = '.'.join(parts[i:i+4])
+                                    cached_ip_obj = ipaddress.IPv4Address(ip_candidate)
+                                    if cached_ip_obj == target_ip_obj:
+                                        return cached_mac
+                                except (ValueError, ipaddress.AddressValueError):
+                                    continue
+                except Exception:
+                    # Si tout échoue, essayer une comparaison string simple
+                    if cached_key == ip_str or cached_key == ip_normalized:
+                        return cached_mac
+        
+        return None
+    
+    def scan_host(self, ip):
+        """
+        Affiche le contenu complet du cache SNMP pour debug
+        Écrit dans la console ET dans un fichier debug_snmp_cache.txt
+        """
+        import datetime
+        
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        output_lines = []
+        output_lines.append("="*70)
+        output_lines.append(f"SNMP CACHE DUMP - {timestamp}")
+        output_lines.append("="*70)
+        
+        with self.snmp_cache_lock:
+            cache_size = len(self.snmp_mac_cache)
+            output_lines.append(f"Taille du cache: {cache_size} entrées\n")
+            
+            if cache_size == 0:
+                output_lines.append("⚠ CACHE VIDE - Aucune donnée SNMP récupérée\n")
+            else:
+                output_lines.append("Format: [Clé stockée] -> [Adresse MAC]\n")
+                
+                for idx, (cached_key, cached_mac) in enumerate(self.snmp_mac_cache.items(), 1):
+                    # Analyser la clé pour détecter des anomalies
+                    analysis = ""
+                    try:
+                        # Vérifier si c'est une IP valide
+                        ipaddress.IPv4Address(cached_key)
+                        analysis = "✓ IP valide"
+                    except:
+                        # Analyser les résidus potentiels
+                        parts = cached_key.split('.')
+                        if len(parts) > 4:
+                            analysis = f"⚠ RÉSIDU OID ({len(parts)} parties)"
+                        else:
+                            analysis = "✗ Format invalide"
+                    
+                    output_lines.append(f"{idx:3d}. [{cached_key}] -> [{cached_mac}] ({analysis})")
+        
+        output_lines.append("="*70 + "\n")
+        
+        # Affichage console
+        debug_text = "\n".join(output_lines)
+        print(debug_text)
+        
+        # Écriture fichier
         try:
-            transport = await UdpTransportTarget.create((target, 161))
-            dispatcher = Slim()
-            oid = ObjectType(ObjectIdentity(oid_mac))
-
-            current_oid = oid_mac
-            for _ in range(1000):
-                errorIndication, errorStatus, errorIndex, varBinds = await next_cmd(
-                    dispatcher, auth_data, transport,
-                    ObjectType(ObjectIdentity(current_oid)),
-                    lexicographicMode=False
-                )
-
-                if errorIndication or errorStatus or not varBinds: break
-
-                for varBind in varBinds:
-                    oid_full = str(varBind[0])
-                    val = varBind[1]
-
-                    if not oid_full.startswith(oid_mac): return mac_results
-
-                    # Extract IP
-                    parts = oid_full.split('.')
-                    if len(parts) >= 11: # .1.3.6.1.2.1.4.22.1.2.X.X.X.X (base is 10 parts if starting with 1)
-                        # Base OID length is 10: 1.3.6.1.2.1.4.22.1.2
-                        # IP is last 4
-                        ip_parts = parts[-4:]
-                        try:
-                            ip = ".".join(ip_parts)
-                            # Decode MAC
-                            if hasattr(val, 'asOctets'):
-                                mac_raw = val.asOctets()
-                                if len(mac_raw) == 6:
-                                    mac_fmt = ":".join([f"{b:02X}" for b in mac_raw])
-                                    mac_results[ip] = mac_fmt
-                            current_oid = oid_full
-                            current_oid = oid_full
-                        except (ValueError, IndexError): 
-                            continue
-        except Exception: 
-            pass
-        return mac_results
+            debug_file = "debug_snmp_cache.txt"
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(debug_text)
+            self.log(f"Debug dump → {debug_file}")
+            messagebox.showinfo("Debug Dump", 
+                f"Cache SNMP ({cache_size} entrées) dumpé dans:\n{debug_file}\n\nVoir aussi la console.")
+        except Exception as e:
+            self.log(f"Erreur dump fichier: {e}")
+            messagebox.showinfo("Debug Dump", 
+                f"Cache SNMP ({cache_size} entrées) affiché dans la console.")
 
     def scan_host(self, ip):
         """
@@ -758,44 +1472,34 @@ class NetworkScannerGUI:
             None
         """
         ip_str = str(ip)
+        
+        # Normalisation stricte de l'IP pour correspondance avec le cache
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+            ip_normalized = str(ip_obj)
+        except:
+            ip_normalized = ip_str
+        
+        # Ping pour vérifier si l'hôte est en ligne
         is_online, os_type = self.ping_host(ip_str)
 
-        # Vérification cache SNMP (si offline ou online)
-        # Essayer plusieurs formats d'IP pour être sûr de trouver la MAC
-        snmp_mac = None
-        with self.snmp_cache_lock:
-            # Normaliser l'IP pour la recherche
-            try:
-                ip_obj = ipaddress.ip_address(ip_str)
-                ip_normalized = str(ip_obj)
-            except:
-                ip_normalized = ip_str
-
-            # Essayer avec l'IP normalisée
-            snmp_mac = self.snmp_mac_cache.get(ip_normalized)
-
-            # Si pas trouvé, essayer une recherche plus large (au cas où le format diffère)
-            if not snmp_mac and len(self.snmp_mac_cache) > 0:
-                # Chercher dans toutes les clés (debug)
-                for cached_ip, cached_mac in self.snmp_mac_cache.items():
-                    try:
-                        # Comparer les IPs normalisées
-                        cached_ip_obj = ipaddress.ip_address(cached_ip)
-                        if str(cached_ip_obj) == ip_normalized:
-                            snmp_mac = cached_mac
-                            break
-
-                    except Exception:
-                        # Si l'IP en cache n'est pas valide, comparer directement
-                        if cached_ip == ip_normalized or cached_ip == ip_str:
-                            snmp_mac = cached_mac
-                            break
+        # Récupération MAC depuis le cache SNMP (avec fonction centralisée Force Brute)
+        snmp_mac = self.get_mac_from_cache(ip_normalized) if self.opt_snmp.get() else None
+        
+        # Debug visuel temporaire
+        if self.opt_snmp.get() and len(self.snmp_mac_cache) > 0:
+            cache_keys_sample = list(self.snmp_mac_cache.keys())[:5]
+            print(f"DEBUG: Looking for {ip_normalized} in cache keys: {cache_keys_sample}")
+            if snmp_mac:
+                print(f"DEBUG: ✓ Found SNMP MAC for {ip_normalized}: {snmp_mac}")
+            else:
+                print(f"DEBUG: ✗ No SNMP MAC found for {ip_normalized}")
 
         # Si on a une MAC SNMP, considérer l'hôte comme online
-        if snmp_mac:
-            if not is_online:
-                is_online = True
-                os_type = "Actif (SNMP Table)"
+        # (même si le ping a échoué - important pour les hôtes qui bloquent ICMP)
+        if snmp_mac and not is_online:
+            is_online = True
+            os_type = "Actif (SNMP Table)"
 
         if is_online:
             # Hostname logic
@@ -805,22 +1509,41 @@ class NetworkScannerGUI:
             # NetBIOS
             if self.opt_netbios.get():
                 nb_name, nb_mac = self.netbios.get_info(ip_str)
-                if nb_name: hostname = f"{nb_name} (NB)"
+                if nb_name: 
+                    hostname = f"{nb_name} (NB)"
 
-            # DNS (si pas de NetBIOS ou si on veut compléter, mais ici on remplace si N/A)
+            # DNS (si pas de NetBIOS ou si on veut compléter)
             if self.opt_dns.get() and (hostname == "N/A" or "NB" not in hostname):
                 res = CustomDNSResolver(self.dns_ip_var.get()).resolve_ptr(ip_str)
-                if res: hostname = f"{res} (DNS)"
+                if res: 
+                    hostname = f"{res} (DNS)"
 
-            # MAC Priority
+            # MAC Priority : SNMP > NetBIOS > ARP local
+            # (SNMP est prioritaire car plus fiable sur réseau segmenté)
             mac = None
-            if nb_mac: mac = nb_mac
-            if not mac: mac = self.get_local_arp(ip_str)
-            if not mac and snmp_mac: mac = snmp_mac
+            
+            # 1. Priorité SNMP si activé (données du routeur)
+            if self.opt_snmp.get() and snmp_mac:
+                mac = snmp_mac
+            
+            # 2. NetBIOS (si pas de SNMP ou SNMP non disponible)
+            if not mac and nb_mac:
+                mac = nb_mac
+            
+            # 3. ARP local (fallback)
+            if not mac:
+                mac = self.get_local_arp(ip_str)
+            
+            # 4. Dernier recours : réessayer SNMP même si option désactivée 
+            # (au cas où le cache aurait été rempli précédemment)
+            if not mac and not self.opt_snmp.get():
+                mac = self.get_mac_from_cache(ip_normalized)
 
-            if not mac: mac = "N/A"
+            if not mac:
+                mac = "N/A"
 
-            # Vendor Lookup
+            # Vendor Lookup : Lancé même si le ping a échoué, tant qu'on a une MAC
+            # (Important pour les hôtes détectés uniquement via SNMP)
             vendor = ""
             if self.opt_mac_vendor.get() and mac != "N/A":
                  # Récupération initiale (cache)
@@ -828,7 +1551,7 @@ class NetworkScannerGUI:
                  # Async refresh
                  threading.Thread(target=self._update_vendor_async, args=(ip_str, mac), daemon=True).start()
 
-            # Affichage initial
+            # Affichage initial via root.after pour thread-safety
             data = ("🟢 Online", ip_str, os_type, hostname, mac, vendor, "Scanning...")
             self.root.after(0, lambda ip=ip_str, d=data: self.update_tree(d))
 
@@ -942,17 +1665,33 @@ class NetworkScannerGUI:
         Returns:
             tuple: (bool is_online, str os_guess)
         """
-        param = '-n' if platform.system().lower() == 'windows' else '-c'
+        # Utiliser les paramètres OS-specific
+        ping_params = self.get_ping_params()
+        cmd = ['ping'] + ping_params + [ip]
+        
         try:
-            out = subprocess.check_output(['ping', param, '1', '-w', '500', ip], 
-                                         creationflags=0x08000000 if platform.system() == 'Windows' else 0,
-                                         stderr=subprocess.STDOUT).decode(errors='ignore')
-            if "TTL=" in out.upper():
-                ttl = int(re.search(r'TTL=(\d+)', out, re.I).group(1))
-                os_guess = "Linux" if ttl <= 64 else "Windows" if ttl <= 128 else "Cisco/Network"
-                return True, os_guess
-        except Exception: 
+            # Windows: création sans fenêtre de console
+            creation_flags = 0x08000000 if self.is_windows else 0
+            
+            out = subprocess.check_output(
+                cmd,
+                creationflags=creation_flags,
+                stderr=subprocess.STDOUT,
+                timeout=2
+            ).decode(errors='ignore')
+            
+            if "TTL=" in out.upper() or "ttl=" in out.lower():
+                ttl_match = re.search(r'TTL=(\d+)', out, re.I)
+                if ttl_match:
+                    ttl = int(ttl_match.group(1))
+                    os_guess = "Linux" if ttl <= 64 else "Windows" if ttl <= 128 else "Cisco/Network"
+                    return True, os_guess
+                return True, "Unknown"
+        except subprocess.TimeoutExpired:
             pass
+        except Exception as e:
+                self.logger.debug(f"Ping error for {ip}: {e}")
+        
         return False, ""
 
     def get_local_arp(self, ip):
@@ -966,10 +1705,30 @@ class NetworkScannerGUI:
             str: Adresse MAC ou None
         """
         try:
-            out = subprocess.check_output(['arp', '-a', ip], creationflags=0x08000000 if platform.system() == 'Windows' else 0).decode()
-            m = re.search(r'([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})', out)
-            return m.group(0).upper().replace('-', ':') if m else None
-        except Exception: return None
+            # Utiliser la commande ARP OS-specific
+            cmd = self.get_arp_command()
+            
+            # Windows: création sans fenêtre de console
+            creation_flags = 0x08000000 if self.is_windows else 0
+            
+            out = subprocess.check_output(
+                cmd,
+                creationflags=creation_flags,
+                stderr=subprocess.DEVNULL
+            ).decode(errors='ignore')
+            
+            # Chercher la ligne contenant l'IP
+            for line in out.split('\n'):
+                if ip in line:
+                    m = re.search(r'([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})', line)
+                    if m:
+                        return m.group(0).upper().replace('-', ':')
+            
+            return None
+            
+        except Exception as e:
+            self.logger.debug(f"ARP error for {ip}: {e}")
+            return None
 
     def start_single_scan(self):
         """
@@ -1059,4 +1818,4 @@ def run_gui():
     root.mainloop()
 
 if __name__ == "__main__":
-    run_gui()
+    run_gui() 
