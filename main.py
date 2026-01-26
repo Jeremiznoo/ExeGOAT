@@ -104,11 +104,13 @@ def main():
 
     # ... Fuzzer Mode ...
     fuzz_mode = parser_fuzzer.add_argument_group('Mode de fuzzing')
-    fuzz_mode.add_argument('-m', '--mode', choices=['dir', 'param', 'post', 'form'], default='dir', help='Mode (dir, param, post, form)')
+    fuzz_mode.add_argument('-m', '--mode', choices=['dir', 'param', 'post', 'form'],
+                            default='dir', help='Mode (dir, param, post, form)')
     fuzz_mode.add_argument('--param', type=str, metavar='PARAM', help='Paramètre GET/POST à fuzzer')
     fuzz_mode.add_argument('--post-data', type=str, metavar='DATA', help='Données POST (key=v&k=v)')
     fuzz_mode.add_argument('--form-url', type=str, metavar='URL', help='URL du formulaire')
-    fuzz_mode.add_argument('--field-values', type=str, metavar='DATA', help='Valeurs champs fixes du form')
+    fuzz_mode.add_argument('--field-values', type=str, metavar='DATA',
+                            help='Valeurs champs fixes du form')
 
     # ... Fuzzer Network ...
     fuzz_net = parser_fuzzer.add_argument_group('Réseau')
@@ -138,7 +140,7 @@ def main():
     # ═══════════════════════════════════════════════════════
     # SUBPARSER: nGOAT
     # ═══════════════════════════════════════════════════════
-    parser_ngoat = subparsers.add_parser(
+    subparsers.add_parser(
         'nGOAT',
         parents=[parent_common],
         help='Scanner réseau nGOAT (GUI)',
@@ -188,9 +190,9 @@ def main():
     if args.tool != 'nGOAT' and not args.url:
          # Pour ftpGOAT/BruteGOAT/fuzzer une cible est requise
          # Note: fuzzer vérifie aussi args.wordlist plus tard
-         print(f"{RED}[!] Cible requise (argument positionnel ou -u/--url){RESET}")
-         parser.print_usage() # Affiche l'usage du subparser actif
-         sys.exit(1)
+        print(f"{RED}[!] Cible requise (argument positionnel ou -u/--url){RESET}")
+        parser.print_usage()
+        sys.exit(1)
 
     if args.tool == 'fuzzer':
         run_fuzzer(args)

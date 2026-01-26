@@ -125,7 +125,26 @@ Outil de brute-force générique (style Hydra) supportant SSH et FTP.
     python main.py BruteGOAT ftp://192.168.1.10 -L users.txt -P passwords.txt
     ```
 
----
+## Utilisation avec Docker
+
+ExeGOAT peut être exécuté dans un conteneur Docker afin d’éviter toute installation locale des dépendances.
+
+Run
+
+Depuis la racine du projet :
+
+`docker compose up -d`
+
+Puis pour s'y connecter 
+`docker exec -it exegoat zsh`
+
+/!\ Attention les applications GUI nessecite un environment X11
+
+Pour Windows il est nessécaire d'avoir wsl2
+
+
+
+
 
 ## ⚠️ Avertissement Légal
 
