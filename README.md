@@ -1,153 +1,162 @@
 # ExeGOAT 🐐
 
-[[logo.png]]
+<p align="center">
+  <img src="logo.png" alt="ExeGOAT Logo">
+</p>
 
-**ExeGOAT** est une suite d'outils de sécurité offensive (Pentest) écrite en Python. Elle regroupe plusieurs modules puissants pour l'énumération web, le scan réseau, et les attaques par force brute, le tout accessible via une interface en ligne de commande (CLI) unifiée et une interface graphique (GUI) pour le scanneur réseau.
+**ExeGOAT** is an offensive security (Pentest) toolkit written in Python inspired by **EXEGOL**. It features a powerful suite of modules for web enumeration, network scanning, and brute-force attacks, all accessible via a unified Command Line Interface (CLI) and a Graphical User Interface (GUI) for the network scanner.
 
-## Fonctionnalités
+---
 
-ExeGOAT intègre les outils suivants :
+## Features
 
-1.  **Web Fuzzer** : Un fuzzer web asynchrone ultra-rapide supportant plusieurs modes (répertoires, paramètres GET/POST, formulaires).
-2.  **nGOAT (Network Scanner)** : Un scanner réseau avec interface graphique moderne, supportant la découverte ARP, SNMP (v2c/v3), NetBIOS et la résolution de vendeurs MAC.
-3.  **FTPGOAT** : Un outil complet pour l'audit FTP (check anonyme, brute-force, énumération récursive, shell interactif).
-4.  **BruteGOAT** : Un moteur de brute-force modulaire multi-threadé (support SSH et FTP style Hydra).
+ExeGOAT integrates the following tools:
+
+1.  **Web Fuzzer**: A blazing-fast asynchronous web fuzzer supporting multiple modes (directories, GET/POST parameters, and forms).
+2.  **nGOAT (Network Scanner)**: A network scanner with a modern GUI, supporting ARP discovery, SNMP (v2c/v3), NetBIOS, and MAC vendor lookup.
+3.  **FTPGOAT**: A comprehensive tool for FTP auditing (anonymous check, brute-force, recursive enumeration, and interactive shell).
+4.  **BruteGOAT**: A modular, multi-threaded brute-force engine (supporting SSH and FTP, Hydra-style).
+
+---
 
 ## Installation
 
-1.  Clonez le dépôt :
-    ```bash
-    git clone https://github.com/votre-user/ExeGOAT.git
-    cd ExeGOAT
-    ```
-
-2.  Installez les dépendances :
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-    > **Note** : Pour utiliser le module SSH de `BruteGOAT`, `paramiko` est requis (inclus dans requirements.txt). Pour le scan SNMP avancé, `pysnmp` est utilisé.
-
-## 📖 Utilisation Générale
-
-Le point d'entrée principal est `main.py`.
-
+1.  **Clone the repository:**
 ```bash
-python main.py <outil> [options]
+    git clone https://github.com/your-user/ExeGOAT.git
+    cd ExeGOAT
 ```
 
-Affichez l'aide générale :
+2.  **Install dependencies:**
+```bash
+    pip install -r requirements.txt
+```
+
+    > **Note**: `paramiko` is required for the `BruteGOAT` SSH module. For advanced SNMP scanning, `pysnmp` is used. Both are included in `requirements.txt`.
+
+---
+
+## General Usage
+
+The main entry point is `main.py`.
+```bash
+python main.py  [options]
+```
+
+Display the general help menu:
 ```bash
 python main.py -h
 ```
 
 ---
 
-## Modules Détails & Exemples
+## Module Details & Examples
 
 ### 1. Web Fuzzer (`fuzzer`)
 
-Fuzzer web avancé pour découvrir des ressources cachées ou des vulnérabilités.
+Advanced web fuzzer designed to discover hidden resources or vulnerabilities.
 
-**Modes disponibles :**
-*   `dir` : Énumération de répertoires/fichiers.
-*   `param` : Fuzzing d'un paramètre GET.
-*   `post` : Fuzzing d'un paramètre POST.
-*   `form` : Fuzzing automatique de formulaire.
+**Available modes:**
+*   `dir`: Directory/file enumeration.
+*   `param`: GET parameter fuzzing.
+*   `post`: POST parameter fuzzing.
+*   `form`: Automatic form fuzzing.
 
-**Exemples :**
+**Examples:**
 
-*   **Énumération de répertoires :**
-    ```bash
-    python main.py fuzzer -u http://cible.com -w wordlists/common.txt -t 50
-    ```
+*   **Directory enumeration:**
+```bash
+    python main.py fuzzer -u http://target.com -w wordlists/common.txt -t 50
+```
 
-*   **Fuzzing de paramètre GET (XSS/SQLi) :**
-    ```bash
-    python main.py fuzzer -u http://cible.com/page.php -m param -p id -w wordlists/payloads.txt
-    ```
+*   **GET parameter fuzzing (XSS/SQLi):**
+```bash
+    python main.py fuzzer -u http://target.com/page.php -m param -p id -w wordlists/payloads.txt
+```
 
-*   **Fuzzing de formulaire avec filtre de codes :**
-    ```bash
-    python main.py fuzzer -u http://cible.com/login -m form -p username --field-values "password=admin" -w wordlists/users.txt --hide-codes 404,403
-    ```
+*   **Form fuzzing with status code filtering:**
+```bash
+    python main.py fuzzer -u http://target.com/login -m form -p username --field-values "password=admin" -w wordlists/users.txt --hide-codes 404,403
+```
 
 ### 2. nGOAT - Network Scanner (`nGOAT`)
 
-Lance une interface graphique (GUI) pour scanner le réseau local.
+Launches a Graphical User Interface (GUI) to scan the local network.
 
-**Commande :**
+**Command:**
 ```bash
 python main.py nGOAT
 ```
 
-**Fonctionnalités clé de l'interface :**
-*   Scan ARP rapide.
-*   Récupération table ARP via SNMP (v2c et v3).
-*   Résolution de noms NetBIOS.
-*   Résolution des constructeurs (MAC Vendor Lookup).
-*   Export des résultats en CSV.
+**Key features:**
+*   Fast ARP scanning.
+*   ARP table retrieval via SNMP (v2c and v3).
+*   NetBIOS name resolution.
+*   MAC vendor lookup.
+*   CSV export of results.
 
 ### 3. FTPGOAT (`ftpGOAT`)
 
-Outil d'audit dédié au protocole FTP.
+Dedicated auditing tool for the FTP protocol.
 
-**Modes (`--filter-mode`) :** `anon`, `brute`, `enum`, `shell`, `all`.
+**Modes (`--filter-mode`):** `anon`, `brute`, `enum`, `shell`, `all`.
 
-**Exemples :**
+**Examples:**
 
-*   **Vérifier l'accès anonyme :**
-    ```bash
+*   **Check anonymous access:**
+```bash
     python main.py ftpGOAT -u 192.168.1.10 --filter-mode anon
-    ```
+```
 
-*   **Brute-force FTP :**
-    ```bash
+*   **FTP brute-force:**
+```bash
     python main.py ftpGOAT -u 192.168.1.10 --filter-mode brute -L users.txt -P passwords.txt
-    ```
+```
 
-*   **Shell Interactif FTP (pseudo-shell) :**
-    ```bash
+*   **Interactive FTP shell (pseudo-shell):**
+```bash
     python main.py ftpGOAT -u 192.168.1.10 --filter-mode shell -l admin -p secret
-    ```
+```
 
 ### 4. BruteGOAT (`BruteGOAT`)
 
-Outil de brute-force générique (style Hydra) supportant SSH et FTP.
+Generic multi-threaded brute-force tool (Hydra-style) supporting SSH and FTP.
 
-**Exemples :**
+**Examples:**
 
-*   **Brute-force SSH :**
-    ```bash
-    python main.py BruteGOAT ssh://192.168.1.10 -l root -P rocksyou.txt -t 4
-    ```
+*   **SSH brute-force:**
+```bash
+    python main.py BruteGOAT ssh://192.168.1.10 -l root -P rockyou.txt -t 4
+```
 
-*   **Brute-force FTP (depuis une liste d'utilisateurs et de mots de passe) :**
-    ```bash
+*   **FTP brute-force (from user and password lists):**
+```bash
     python main.py BruteGOAT ftp://192.168.1.10 -L users.txt -P passwords.txt
-    ```
+```
 
-## Utilisation avec Docker
+---
 
-ExeGOAT peut être exécuté dans un conteneur Docker afin d’éviter toute installation locale des dépendances.
+## Docker Usage
 
-Run
+ExeGOAT can be run inside a Docker container to avoid local dependency conflicts.
 
-Depuis la racine du projet :
+**Start the container:**
 
-`docker compose up -d`
+From the project root:
+```bash
+docker compose up -d
+```
 
-Puis pour s'y connecter 
-`docker exec -it exegoat zsh`
+**Access the shell:**
+```bash
+docker exec -it exegoat zsh
+```
 
-/!\ Attention les applications GUI nessecite un environment X11
+> [!IMPORTANT]
+> GUI applications (like nGOAT) require an X11 environment to display. Windows users should use WSL2 with a configured X Server.
 
-Pour Windows il est nessécaire d'avoir wsl2
+---
 
+## ⚠️ Legal Disclaimer
 
-
-
-
-## ⚠️ Avertissement Légal
-
-Ce logiciel est conçu à des fins **éducatives et de tests de sécurité autorisés** uniquement. L'utilisation de cet outil sur des cibles sans autorisation écrite préalable est illégale. Les développeurs déclinent toute responsabilité en cas de mauvaise utilisation.
+This software is designed for **educational purposes and authorized security testing** only. Using this tool against targets without prior written consent is illegal. The developers assume no liability and are not responsible for any misuse or damage caused by this program.
