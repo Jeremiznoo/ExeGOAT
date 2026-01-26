@@ -1,5 +1,7 @@
 # ExeGOAT 🐐
 
+[[logo.png]]
+
 **ExeGOAT** est une suite d'outils de sécurité offensive (Pentest) écrite en Python. Elle regroupe plusieurs modules puissants pour l'énumération web, le scan réseau, et les attaques par force brute, le tout accessible via une interface en ligne de commande (CLI) unifiée et une interface graphique (GUI) pour le scanneur réseau.
 
 ## Fonctionnalités
