@@ -153,8 +153,27 @@ docker exec -it exegoat zsh
 ```
 
 > [!IMPORTANT]
-> GUI applications (like nGOAT) require an X11 environment to display. Windows users should use WSL2 with a configured X Server.
+> GUI applications (like nGOAT, Wireshark or Caido) require an X11 environment to display. Windows users should use WSL2 with a configured X Server.
 
+
+For Windows version need to commente this line :
+```docker-compose.yml
+devices:
+ /dev/dri:/dev/dri # Share of GC
+```
+---
+## Documentation Sphinx
+Need to be in folders docs and run this command : 
+
+Linux : 
+```
+make html
+```
+make html
+```
+.\make.bat html
+```
+The documentation is generate here : /docs/build/html/index.html
 ---
 
 ## ⚠️ Legal Disclaimer
