@@ -6,3 +6,4 @@ sphinx-rtd-theme
 Pillow
 pysnmp
 paramiko
+pytest-asyncio
